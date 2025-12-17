@@ -65,7 +65,7 @@ def list_s3_objects(bucket_name: str) -> List[str]:
 
     keys: List[str] = []
     try:
-        # Attempting to iterate will detect if the bucket exists,
+        # Attempting to iterate will detect if the bucket exists
         # a ClientError should be raised if it does not.
         for obj_summary in bucket.objects.all():
             keys.append(obj_summary.key)

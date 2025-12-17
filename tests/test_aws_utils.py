@@ -64,7 +64,7 @@ def test_list_s3_objects_happy_path():
 
 @mock_aws
 def test_upload_file_to_s3_happy_path(tmp_path):
-    """Test uploading a file to an S3 bucket."""
+    """Test uploading an object to an S3 bucket."""
     s3 = _s3_resource()
     create_s3_bucket("test-bucket")
     # create a temp test file on the fly using pytest's 'tmp_path' fixture
