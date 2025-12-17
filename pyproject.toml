@@ -3,4 +3,12 @@ name = "port-automation-project"
 version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "boto3>=1.42.5",
+    "boto3-stubs~=1.42.5",
+    "moto>=5.1.18",
+    "music21>=9.9.1",
+    "pandas>=2.3.3",
+    "pytest>=9.0.2",
+    "soundsliceapi>=1.1",
+]
