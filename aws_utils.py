@@ -1,13 +1,22 @@
-"""This file contains Python functions that use the boto3 library to connect to Amazon AWS in Python using CLI
-credentials"""
+"""
+This file contains Python functions that use the boto3 library to connect to
+Amazon AWS in Python using CLI credentials.
 
-import os
-from typing import List
+Note: Much of this functionality ultimately will be replaced by direct calls
+to the AWS CLI.
+"""
 
 import boto3
-from botocore.exceptions import ClientError
+import os
 
-AWS_REGION = "eu-west-1"
+from dotenv import load_dotenv
+from botocore.exceptions import ClientError
+from typing import List
+
+
+# Securely load AWS credentials from .env file
+load_dotenv()
+AWS_REGION = os.getenv("AWS_DEFAULT_REGION")
 
 
 def _s3_resource():

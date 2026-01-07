@@ -6,9 +6,12 @@ requires-python = ">=3.13"
 dependencies = [
     "boto3>=1.42.5",
     "boto3-stubs~=1.42.5",
+    "ipykernel>=7.1.0",
     "moto>=5.1.18",
     "music21>=9.9.1",
     "pandas>=2.3.3",
+    "pandas-stubs~=2.3.3",
     "pytest>=9.0.2",
+    "python-dotenv>=1.2.1",
     "soundsliceapi>=1.1",
 ]

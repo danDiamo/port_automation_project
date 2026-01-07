@@ -1,4 +1,10 @@
-"""This file holds unit tests for the aws_utils module."""
+"""
+This file holds unit tests for the aws_utils module. Our use of the AWS boto3
+Python library means we no longer need to connect to AWS via the CLI app.
+
+Note: much of this content may ultimately be superseded by direct calls to the
+AWS CLI.
+"""
 
 from aws_utils import (
     check_s3_object_exists,
@@ -96,13 +102,15 @@ def test_download_object_from_s3_happy_path():
 def test_create_s3_bucket_unhappy_path_already_owned():
     """Test handling of an existing S3 bucket."""
     first_obj = create_s3_bucket("test-bucket")
-    second_obj = create_s3_bucket("test-bucket")  # should not raise an error -- will be caught by create_s3_bucket()
+    # below should not raise an error -- will be caught by create_s3_bucket()
+    second_obj = create_s3_bucket("test-bucket")
     assert first_obj == second_obj == "test-bucket"
 
 
 @mock_aws
 def test_check_s3_object_exists_unhappy_path_no_such_key():
-    """Test behaviour of aws_utils.check_s3_object_exists when an S3 object does not exist."""
+    """Test behaviour of aws_utils.check_s3_object_exists when an S3 object
+    does not exist."""
     # create empty bucket
     create_s3_bucket("test-bucket")
     # check for non-existent object inside bucket
@@ -111,7 +119,8 @@ def test_check_s3_object_exists_unhappy_path_no_such_key():
 
 @mock_aws
 def test_list_s3_objects_unhappy_path_no_such_bucket():
-    """Test behaviour of aws_utils.list_s3_objects when an S3 bucket does not exist."""
+    """Test behaviour of aws_utils.list_s3_objects when an S3 bucket does not
+    exist."""
     with pytest.raises(ClientError):
         # list contents of non-existent bucket
         list_s3_objects("bucket-does-not-exist")
@@ -142,9 +151,9 @@ def test_download_object_from_s3_unhappy_path_no_such_key():
 
 @mock_aws
 def test_upload_file_to_s3_uses_basename_for_object_key(tmp_path):
-    """Verify upload_file_to_s3 uses os.path.basename(file_name) as the S3 object key."""
+    """Verify upload_file_to_s3 uses os.path.basename(file_name) as the S3
+    object key."""
     # create bucket
-    s3 = _s3_resource()
     create_s3_bucket("test-bucket")
 
     # create a tmp nested local path so the filename has directories in it.
