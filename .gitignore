@@ -1,0 +1,11 @@
+/legacy/itma/Test_data_for_Port/
+/legacy/itma/workspace/
+/legacy/danny
+/legacy
+/tests/Test_data_for_Port/
+sandbox.py
+flow_control_sandbox.ipynb
+uv.lock
+/.env
+/.idea/
+/.venv/
