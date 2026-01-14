@@ -114,6 +114,7 @@ class Score:
                 f"This score does not contain any key signature objects. ")
         # Return only the first key signature object encoded in the score
         self.key = key_sigs[0]
+        # TODO: write output to metadata file as a string
         return key_sigs[0]
 
     def extract_tonic_from_key_signature(self):
@@ -131,6 +132,7 @@ class Score:
                              "either detect and/or read key signature, "
                              "then retry.")
         # read tonic and return in human-readable format
+        # TODO: write output to metadata file as a string
         return key.tonic.name
 
 
@@ -143,6 +145,7 @@ class Score:
                              "contain any signature information. Please "
                              "either detect and/or read key signature, "
                              "then retry.")
+        # TODO: write output to metadata file as a string
         return key.mode
 
     def extract_time_signature(self):
@@ -208,7 +211,7 @@ class Score:
                     scale_degree = diatonic_scale.getScaleDegreeFromPitch(
                         n.pitch)
                     accented_notes.append(scale_degree)
-
+        # TODO: write output to metadata file as a string
         return accented_notes
     
     def count_number_of_parts(self):
@@ -232,8 +235,12 @@ class Score:
         num_parts = len(part_structure)
         return num_parts
 
-    def convert_score_to_midi(self):
-        pass
+    def write_score_to_midi(self, out_path):
+        """write music21 stream to MIDI file"""
+
+        score = self.content
+        output = score.write('midi', fp=out_path)
+        return output
 
     def convert_score_to_abc(self):
         pass

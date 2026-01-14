@@ -1,5 +1,6 @@
 """This file holds unit tests for the Score class."""
 import music21.key
+import os
 import pytest
 
 from music21 import stream
@@ -124,6 +125,34 @@ def test_count_number_of_parts():
     default_score.read_content_to_music21_stream()
 
     assert default_score.count_number_of_parts() == 2
+
+def test_write_score_to_midi(tmp_path):
+    """Test writing a music21 Stream object to MIDI"""
+    default_score = Score(happy_testfile)
+    default_score.read_content_to_music21_stream()
+
+    output_filepath = tmp_path / 'test.mid'
+    midi_file = default_score.write_score_to_midi(
+        out_path= output_filepath)
+
+    assert os.path.exists(output_filepath)
+    assert os.path.getsize(midi_file) > 0
+
+    # Use our Score class to compare the opening pitch sequence of the newly
+    # generated MIDI file with the original MusicXML score
+    try:
+        new_score = music21.converter.parse(output_filepath)
+        new_score_intro_pitches = [
+            note.pitch for note in new_score.recurse().notes][:10]
+
+        default_score_expanded = default_score.content.expandRepeats()
+        default_score_intro_pitches = [
+            note.pitch for note in default_score_expanded.recurse().notes][:10]
+
+        assert new_score_intro_pitches == default_score_intro_pitches
+
+    except Exception as e:
+        pytest.fail(f"Could not parse the generated MIDI file: {e}")
     
 
 
