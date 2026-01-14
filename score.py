@@ -9,6 +9,7 @@ import pandas as pd
 
 from collections import Counter
 from music21 import analysis, bar, key, meter, note, chord
+from music21.analysis.discrete import SimpleWeights
 from pandas.core.config_init import max_cols
 
 
@@ -79,33 +80,31 @@ class Score:
         self.content = music21.converter.parse(self.score_path)
 
     def detect_key_signature(self):
-        """Detects key via Music21-s built-in Krumhansl-Schmuckler algorithm"""
+
+        """
+        Detects key via Music21-s built-in Krumhansl-Schmuckler algorithm,
+        using 'Simple Weights' by Craig Sapp (Humdrum Toollit).
+        """
 
         # TODO: Discuss this implementation with ITMA
+        # Consider using only the incipit or A part rather than the whole tune?
+        content = self.content
+        # Detect key using Krumhansl-Schmuckler algorithm with Craig Sapp's
+        # simple weights applied
+        key_analysis = SimpleWeights(content)
+        detected_key = key_analysis.getSolution(content)
 
-        # Detect key of each 4-bar 'half phrase' in the score
-        key_analysis = analysis.floatingKey.KeyAnalyzer(self.content)
-        key_analysis.windowSize = 8
-        detected_keys = key_analysis.run()
-
-        # Check that at least one Key object was actually returned
-        if detected_keys is None:
+        # Check that a Key object was returned
+        if detected_key is None:
             raise ValueError("No key signature detected.")
 
-        # count and rank key signature occurrences
-        ranked_key_sigs = Counter(detected_keys)
-        max_count = ranked_key_sigs.most_common(1)[0][1]
-        # identify the most frequently occurring key signature(s)
-        top_ranked = [
-            key for key, count in ranked_key_sigs.items() if count == max_count
-        ]
-        # Return the first occurring of the top-ranked key signature(s)
-        self.key = top_ranked[0]
-        return top_ranked[0]
+        self.key = detected_key
+        return detected_key
 
     def read_encoded_key_signature_from_score(self):
         """Get any KeySignature objects provided within the score"""
 
+        # TODO: Discuss this implementation with ITMA
         content = self.content.recurse()
         key_sigs = [ks for ks in content.getElementsByClass(key.KeySignature)]
         # handle cases were no key signatures were provided
@@ -114,7 +113,6 @@ class Score:
                 f"This score does not contain any key signature objects. ")
         # Return only the first key signature object encoded in the score
         self.key = key_sigs[0]
-        # TODO: write output to metadata file as a string
         return key_sigs[0]
 
     def extract_tonic_from_key_signature(self):
@@ -132,7 +130,6 @@ class Score:
                              "either detect and/or read key signature, "
                              "then retry.")
         # read tonic and return in human-readable format
-        # TODO: write output to metadata file as a string
         return key.tonic.name
 
 
@@ -145,14 +142,12 @@ class Score:
                              "contain any signature information. Please "
                              "either detect and/or read key signature, "
                              "then retry.")
-        # TODO: write output to metadata file as a string
         return key.mode
 
     def extract_time_signature(self):
         """Extracts the time signature from the score"""
 
-        # TODO: Discuss implementation with ITMA -- only takes first time sig
-
+        # TODO: Discuss implementation with ITMA -- do we need a default val?
         all_time_signatures = self.content[meter.TimeSignature]
         # Make sure at least one time signature was found
         if not all_time_signatures:
@@ -168,7 +163,8 @@ class Score:
         """Extracts a 4-bar incipit from the score"""
 
         # TODO: Discuss with ITMA: will score always be single-line melody?
-        #  finish functionality here according to answer!
+        # revisit functionality here according to their answer!
+        # May need to flatten or select a part
 
         content = self.content
         #  check score is not empty
@@ -211,7 +207,7 @@ class Score:
                     scale_degree = diatonic_scale.getScaleDegreeFromPitch(
                         n.pitch)
                     accented_notes.append(scale_degree)
-        # TODO: write output to metadata file as a string
+
         return accented_notes
     
     def count_number_of_parts(self):
