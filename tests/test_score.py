@@ -1,4 +1,6 @@
 """This file holds unit tests for the Score class."""
+import re
+
 import music21.key
 import os
 import pytest
@@ -33,7 +35,7 @@ def test_loading_content(default_score):
     default_score.read_content_to_music21_stream()
     assert isinstance(default_score.content, stream.Stream)
 
-def test_key_signature_detection():
+def test_detect_key_signature_algorithmically():
     """Test our usage of Music21's algorithmic key signature detection"""
     default_score = Score(happy_testfile)
     default_score.read_content_to_music21_stream()
@@ -41,32 +43,47 @@ def test_key_signature_detection():
     detected_key_sig = None
     # read key signature(s) & handle error if none are present
     try:
-        detected_key_sig = default_score.detect_key_signature()
+        detected_key_sig = (
+            default_score._detect_key_signature_algorithmically()
+        )
     except ValueError as e:
         print(f"Error: {e}")
-    # check type of encoded key signature
-    assert isinstance(detected_key_sig, music21.key.Key)
+    # check type of return value
+    assert isinstance(detected_key_sig, str)
+    # check string formatting
+    assert len(detected_key_sig.split()) == 2
+    # check value assigned to detected_key_sig attr has been updated:
+    assert default_score.alt_key_signature is not None
+    # check type of detected_key_sig attr
+    assert isinstance(default_score.alt_key_signature, music21.key.Key)
+
 
 def test_read_key_signature_from_score():
     """Test reading key signature(s) directly from MusicXML file"""
     default_score = Score(happy_testfile)
     default_score.read_content_to_music21_stream()
 
-    encoded_key_sig = None
+    key_sig = None
     # read key signature(s) & handle error if none are present
     try:
-        encoded_key_sig = default_score.read_encoded_key_signature_from_score()
+        key_sig = default_score._read_key_signature_from_score()
     except ValueError as e:
         print(f"Error: {e}")
-    # check type of encoded key signature
-    assert isinstance(encoded_key_sig, music21.key.Key)
+    # check type of return value
+    assert isinstance(key_sig, str)
+    # check string formatting
+    assert len(key_sig.split()) == 2
+    # check value assigned to key_signature attr has been updated:
+    assert default_score.key_signature != None
+    # check type of key_signature attr
+    assert isinstance(default_score.key_signature, music21.key.Key)
 
 def test_extract_tonic_from_key_signature():
     """Test extracting tonic from key signature"""
 
     default_score = Score(happy_testfile)
     default_score.read_content_to_music21_stream()
-    default_score.detect_key_signature()
+    default_score._detect_key_signature_algorithmically()
     tonic = default_score.extract_tonic_from_key_signature()
     assert isinstance(tonic, str)
 
@@ -75,7 +92,7 @@ def test_extract_mode_from_key_signature():
 
     default_score = Score(happy_testfile)
     default_score.read_content_to_music21_stream()
-    default_score.detect_key_signature()
+    default_score._detect_key_signature_algorithmically()
     mode = default_score.extract_mode_from_key_signature()
     assert isinstance(mode, str)
 
@@ -84,14 +101,13 @@ def test_extract_time_signature():
 
     default_score = Score(happy_testfile)
     default_score.read_content_to_music21_stream()
-
     time_sig = None
+
     try:
         time_sig = default_score.extract_time_signature()
     except ValueError as e:
         print(f"Error: {e}")
 
-    time_sig = default_score.extract_time_signature()
     time_sig_elements = time_sig.split('/')
     assert (len(time_sig_elements) == 2
             and time_sig_elements[0].isdigit()
@@ -104,8 +120,7 @@ def test_extract_incipit():
     default_score.read_content_to_music21_stream()
 
     incipit = default_score.extract_incipit()
-    melody = incipit.getElementsByClass('Part')[0]
-    measures = melody.getElementsByClass('Measure')
+    measures = incipit.getElementsByClass('Measure')
     assert isinstance(incipit, music21.stream.Stream) and len(measures) == 4
 
 def test_create_breathnach_codes():
@@ -153,6 +168,24 @@ def test_write_score_to_midi(tmp_path):
 
     except Exception as e:
         pytest.fail(f"Could not parse the generated MIDI file: {e}")
+
+
+def test_convert_score_to_abc(tmp_path):
+    """Test converting MusicXML to ABC notation"""
+    default_score = Score(happy_testfile)
+
+    # Test XML-ABC conversion
+    abc_content = default_score.convert_score_to_abc()
+    # Verify we got a string back
+    assert isinstance(abc_content, str)
+    assert len(abc_content) > 0
+
+    # Verify basic ABC structure (X: is the reference number, K: is the key)
+    assert "X:" in abc_content
+    assert "K:" in abc_content
+
+# TODO: Add a test for find_key_signature()
+
     
 
 
