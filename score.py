@@ -7,6 +7,7 @@ import inspect
 import os
 import platform
 import shutil
+import sys
 import subprocess
 import tempfile
 import warnings
@@ -394,10 +395,16 @@ class Score:
         return max(1, num_parts)
 
     @ensure_loaded
-    def write_score_to_midi(self, out_path=None):
+    def write_score_to_midi(self, out_path=None, stream=None):
         """write music21 stream to MIDI file"""
 
         # TODO: write output to AWS rather than local disk? Discuss w/ ITMA
+
+        # Default to full score content if no stream is provided
+        # This allows us to pass both incipit (stream) and full score to
+        # this method as needed.
+        if stream is None:
+            stream = self.content
 
         # If no path is given, create a temporary one
         if out_path is None:
@@ -405,9 +412,9 @@ class Score:
             out_path = temp_dir / self.score_path.with_suffix('.mid').name
 
         try:
-            # expand repeats (i.e.: ensure MIDI reflects all repeat markers
-            # in the score) and write to disk
-            score = self.content.expandRepeats()
+            # expand repeats (i.e.: ensure MIDI output reflects all
+            # repeat markers in the score) and write to disk
+            score = stream.expandRepeats()
             output = score.write('midi', fp=str(out_path))
             return output
 
@@ -634,14 +641,156 @@ class Score:
             if standard_svg.exists() and standard_svg != output_path:
                 os.remove(standard_svg)
 
-    def convert_midi_incipit_to_mp3(self):
-        # use MIDI as intermediate format
-        pass
+    @staticmethod
+    def _check_fluidsynth():
+        """
+        Checks if FluidSynth is installed.
+        Returns True if found, False otherwise.
+        """
+        if shutil.which('fluidsynth') is None:
+            warnings.warn(
+                "FluidSynth not found on system. "
+                "MP3 conversion is unavailable.",
+                UserWarning
+            )
+            return False
+        return True
 
-    def copy_musicxml_file_to_aws(self):
+    @staticmethod
+    def _check_ffmpeg():
+        """
+        Checks if FFmpeg is installed.
+        Returns True if found, False otherwise.
+        """
+        if shutil.which(str('ffmpeg')) is None:
+            warnings.warn(
+                "FFmpeg not found on system. MP3 conversion is unavailable.",
+                UserWarning
+            )
+            return False
+        return True
+
+    def _ensure_soundfont_exists(self):
+        """
+        Ensures the GeneralUser-GS.sf2 SoundFont is available in the assets
+        dir. If not, runs the setup script to download it.
+        """
+
+        project_root = Path(__file__).parent
+        assets_dir = project_root / "assets"
+        soundfont_path = assets_dir / "GeneralUser-GS.sf2"
+
+        if not soundfont_path.exists():
+            warnings.warn("SoundFont not found. Attempting to download...",
+                          UserWarning)
+            setup_soundfont = project_root / "setup_general_user_gs.py"
+
+            if not setup_soundfont.exists():
+                raise FileNotFoundError(
+                    f"SoundFont setup helper not found at {setup_soundfont}")
+
+            # Run the setup script
+            subprocess.run(
+                [sys.executable, str(setup_soundfont)],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+
+        if not soundfont_path.exists():
+            raise RuntimeError("Failed to obtain SoundFont.")
+
+        return soundfont_path
+
+    @ensure_loaded
+    def convert_incipit_to_mp3(self, output_path=None):
+        """
+        Converts the incipit to an MP3 file using FluidSynth (via CLI) and the
+        GeneralUser GS SoundFont. Optimised for speed via fast-rendering flags.
+        """
+
+        # make sure FluidSynth is installed
+        if not self._check_fluidsynth():
+            raise RuntimeError(
+                "FluidSynth not found. MP3 conversion unavailable."
+            )
+        # make sure our SoundFont is available
+        soundfont_path = self._ensure_soundfont_exists()
+
+        # set up input and paths
+        if self.incipit is None:
+            self.extract_incipit()
+
+        if output_path is None:
+            output_path = self.score_path.with_suffix('.mp3')
+        else:
+            output_path = Path(output_path)
+
+        # explicitly make Windows-compatible
+        is_windows = platform.system() == "Windows"
+
+        # Create temporary paths for intermediate outputs
+        temp_dir = Path(tempfile.gettempdir())
+        temp_midi = temp_dir / f"temp_incipit_{os.getpid()}.mid"
+        temp_wav = temp_dir / f"temp_incipit_{os.getpid()}.wav"
+
+        try:
+            # Export the incipit to MIDI
+            self.write_score_to_midi(out_path=temp_midi, stream=self.incipit)
+
+            # Render MIDI to WAV via FluidSynth
+            fs_cmd = [
+                'fluidsynth',
+                '-ni',
+                '-F', str(temp_wav),
+                str(soundfont_path),
+                str(temp_midi)
+            ]
+            subprocess.run(
+                fs_cmd,
+                check=True,
+                capture_output=True,
+                shell=is_windows
+            )
+
+            if not temp_wav.exists():
+                raise RuntimeError(
+                    "FluidSynth failed to create temporary WAV file.")
+
+            # Convert WAV to MP3 via FFmpeg
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-y',  # overwrite if re-running the script on the same score
+                '-i', str(temp_wav),
+                '-codec:a', 'libmp3lame',
+                '-qscale:a', '2',  # High quality VBR
+                str(output_path)
+            ]
+            subprocess.run(
+                ffmpeg_cmd,
+                check=True,
+                capture_output=True,
+                shell=is_windows
+            )
+
+            return output_path
+
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"MP3 Conversion failed for {self.score_path.name}. "
+                f"Stderr: {e.stderr.decode() if e.stderr else 'Unknown error'}"
+            ) from e
+        finally:
+            # Cleanup all intermediate files
+            for p in [temp_midi, temp_wav]:
+                if p.exists():
+                    os.remove(p)
+
+
+def copy_musicxml_file_to_aws(self):
         # use as first step in AWS testing -- possibly make into a
         # input-agnostic helper method (or maybe just use BOTO3 setter?)
-        pass
+    pass
 
     def read_score_metadata_from_csv(self, metadata_path):
         self.metadata_path = metadata_path

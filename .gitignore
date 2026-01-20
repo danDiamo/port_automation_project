@@ -9,3 +9,5 @@ uv.lock
 /.env
 /.idea/
 /.venv/
+/assets/
+/assets/GeneralUser-GS.sf2

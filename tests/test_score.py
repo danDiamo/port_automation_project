@@ -220,6 +220,22 @@ def test_convert_incipit_to_svg(tmp_path, default_score):
     assert svg_path.suffix == '.svg'
     assert svg_path.stat().st_size > 0
 
+def test_convert_incipit_to_mp3(tmp_path, default_score):
+    """Test converting incipit to an MP3 file"""
+
+    # Define an output path in the temp directory
+    output_mp3 = tmp_path / "incipit_test.mp3"
+
+    # Run conversion
+    mp3_path = default_score.convert_incipit_to_mp3(output_path=output_mp3)
+
+    # Verify we got a Path back and the file exists on disk
+    assert mp3_path is not None
+    assert mp3_path.exists()
+    assert mp3_path.suffix == '.mp3'
+    # Check that the file has actual data
+    assert mp3_path.stat().st_size > 0
+
     
 
 
