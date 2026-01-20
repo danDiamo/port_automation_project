@@ -192,7 +192,6 @@ def test_convert_score_to_abc(tmp_path):
     assert "X:" in abc_content
     assert "K:" in abc_content
 
-
 def test_convert_score_to_pdf(tmp_path, default_score):
     """Test converting MusicXML to PDF"""
 
@@ -207,6 +206,19 @@ def test_convert_score_to_pdf(tmp_path, default_score):
     assert pdf_path.suffix == '.pdf'
     assert pdf_path.stat().st_size > 0
 
+def test_convert_incipit_to_svg(tmp_path, default_score):
+    """Test converting a 4-bar incipit to a cropped SVG file"""
+
+    # Define an output path in the temp directory
+    output_svg = tmp_path / "incipit_test.svg"
+
+    # Run conversion
+    svg_path = default_score.convert_incipit_to_svg(output_path=output_svg)
+
+    assert svg_path is not None
+    assert svg_path.exists()
+    assert svg_path.suffix == '.svg'
+    assert svg_path.stat().st_size > 0
 
     
 

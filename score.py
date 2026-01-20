@@ -1,21 +1,25 @@
 """This file will hold a 'Score' Python class, modeling a single digital music
 score"""
 
+# built-in imports
 import copy
 import inspect
+import os
+import platform
 import shutil
+import subprocess
 import tempfile
 import warnings
 
-import music21
-import os
-import pandas as pd
-
+from collections import Counter
 from functools import wraps
 from pathlib import Path
 
+# external library imports
+import music21
+import pandas as pd
+
 from abc_xml_converter import convert_xml2abc
-from collections import Counter
 from music21 import analysis, bar, key, meter, note, chord
 from music21.analysis.discrete import SimpleWeights
 from pandas.core.config_init import max_cols
@@ -444,59 +448,176 @@ class Score:
 
     @ensure_loaded
     def convert_score_to_pdf(self, output_path=None):
-
         """
-        Converts the score to a PDF using LilyPond as the backend.
-
-        Args:
-            output_path (Path or str): Where to save the PDF. If None,
-                                     it defaults to the score's name.
-        Returns:
-            Path: The path to the generated PDF.
+        Converts the score to a PDF using LilyPond utilities.
+        Handles OS-specific command differences (Windows vs macOS/Linux).
         """
 
         if not self._check_lilypond():
-            return None
+            raise RuntimeError(
+                "LilyPond not found. PDF conversion unavailable."
+            )
 
+        # setup output path
         if output_path is None:
             output_path = self.score_path.with_suffix('.pdf')
         else:
             output_path = Path(output_path)
 
+        # setup tmp path for .ly files
+        ly_path = output_path.with_suffix('.ly')
+        # make Windows-compatible before passing to CLI
+        is_windows = platform.system() == "Windows"
+
         try:
-            # Fix for LilyPond 2.24+ syntax error:
-            # music21 sometimes exports Staff names as empty,
-            # so we ensure parts have names.
-            score = copy.deepcopy(self.content)
-            for i, p in enumerate(score.parts):
-                if not p.id or p.id == "":
-                    p.id = f"Part_{i + 1}"
-                if not p.partName:
-                    p.partName = f"Part {i + 1}"
+            # Convert MusicXML to .ly
+            # On Windows, musicxml2ly is often packaged as a script that needs
+            # the shell or full path
+            xml2ly_cmd = [
+                'musicxml2ly',
+                '--language=english',
+                '-o',
+                str(ly_path),
+                str(self.score_path)
+            ]
 
-            # music21's write('lily.pdf') handles the LilyPond conversion.
-            generated_pdf = score.write('lily.pdf', fp=str(output_path))
-            return Path(generated_pdf)
+            subprocess.run(
+                xml2ly_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                shell=is_windows
+                # Windows needs shell=is_windows to find scripts in PATH
+            )
 
-        except Exception as e:
-        # Raising an error ensures the process stops if conversion fails
+            # Compile LilyPond to PDF
+            output_stem = str(output_path.with_suffix(''))
+            lily_cmd = [
+                'lilypond',
+                '-s',
+                '-o',
+                output_stem,
+                str(ly_path)
+            ]
+
+            subprocess.run(
+                lily_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                shell=is_windows
+            )
+
+            # Cleanup tmp dir
+            if ly_path.exists():
+                os.remove(ly_path)
+
+            return output_path
+
+        except subprocess.CalledProcessError as e:
+            # Cleanup even if it fails
+            if ly_path.exists():
+                os.remove(ly_path)
             raise RuntimeError(
-                f"Failed to convert {self.score_path.name} to PDF. Error: {e}"
+                f"PDF Conversion failed for {self.score_path.name}. "
+                f"Stderr: {e.stderr}"
             ) from e
 
-    def convert_incipit_to_midi(self):
-        # may not need to be a stand-alone method (combine with method below?)
-        pass
+    @ensure_loaded
+    def convert_incipit_to_svg(self, output_path=None):
+        """
+        Converts the score incipit to a cropped SVG file using the LilyPond CLI
+        and musicxml2ly utility. Optimized for bulk processing and OS-agnostic.
+        """
+
+        if not self._check_lilypond():
+            raise RuntimeError(
+                "LilyPond not found. SVG conversion is unavailable.")
+
+        # set up input and paths
+        if self.incipit is None:
+            self.extract_incipit()
+        if output_path is None:
+            output_path = self.score_path.with_suffix('.svg')
+        else:
+            output_path = Path(output_path)
+
+        # explicitly make Windows-compatible
+        is_windows = platform.system() == "Windows"
+
+        # Create a temporary MusicXML file for the 4-bar incipit
+        temp_xml = Path(
+            tempfile.gettempdir()) / f"temp_incipit_{os.getpid()}.xml"
+        # set up output paths
+        ly_path = output_path.with_suffix('.ly')
+        output_stem = str(output_path.with_suffix(''))
+
+        try:
+            # Export the incipit to XML
+            self.incipit.write('xml', fp=str(temp_xml))
+
+            # Convert temporary XML to .ly using musicxml2ly
+            xml2ly_cmd = [
+                'musicxml2ly',
+                '--language=english',
+                '-o',
+                str(ly_path),
+                str(temp_xml)
+            ]
+            subprocess.run(
+                xml2ly_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                shell=is_windows
+            )
+
+            # Compile .ly to cropped SVG using lilypond
+            lily_cmd = [
+                'lilypond',
+                '-dbackend=svg',
+                '-dcrop',
+                '-s',
+                '-o', output_stem,
+                str(ly_path)
+            ]
+            subprocess.run(
+                lily_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                shell=is_windows
+            )
+
+            # Handle LilyPond's cropped naming convention, which
+            # auto-appends ".cropped.svg" to the output filename"
+            cropped_svg = (
+                    output_path.parent / f"{output_path.stem}.cropped.svg")
+            if cropped_svg.exists():
+                if output_path.exists():
+                    os.remove(output_path)
+                os.rename(cropped_svg, output_path)
+
+            return output_path
+
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"SVG Conversion failed for incipit of {self.score_path.name}. "
+                f"Stderr: {e.stderr}"
+            ) from e
+        finally:
+            # Clean up all temp files
+            for p in [temp_xml, ly_path]:
+                if p and p.exists():
+                    os.remove(p)
+
+            # Remove non-cropped SVG if LilyPond generated one
+            standard_svg = output_path.with_suffix('.svg')
+            if standard_svg.exists() and standard_svg != output_path:
+                os.remove(standard_svg)
 
     def convert_midi_incipit_to_mp3(self):
-        pass
-
-    def convert_incipit_to_lilypond(self):
-        # may not need to be a stand-alone method (combine with method below?)
-        pass
-
-    def convert_incipit_to_svg(self):
-        # needs Lilypond installed as an external dependency
+        # use MIDI as intermediate format
         pass
 
     def copy_musicxml_file_to_aws(self):
