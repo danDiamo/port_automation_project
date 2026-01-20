@@ -327,7 +327,25 @@ class Score:
                 f"Cannot extract key signature for {self.score_path.name}"
             )
 
-        diatonic_scale = key_sig.getScale()
+        # Ensure we have a Key object (which has a .mode) rather than
+        # just a KeySignature
+        if key_sig is not None and not isinstance(key_sig, key.Key):
+            key_sig = key_sig.asKey()
+
+        # Check that we have a mode defined in the key signature
+        # (incl. maj/min tonality along with all 'church modes')
+        current_mode = getattr(key_sig, 'mode', None)
+
+        if not current_mode:
+            warnings.warn(
+                f"Could not determine scale for {self.score_path.name}. "
+                "Breathnach code cannot be generated.",
+                UserWarning
+            )
+            return None
+
+        diatonic_scale = key_sig.getScale(current_mode)
+
         # Remove expressions and articulation
         for n in incipit.recurse().notes:
             n.expressions = []
@@ -405,8 +423,8 @@ class Score:
 
         # TODO: Write output to file with an appropriate filename
 
-        #  Note: selecting the top line from mulit-part scores is beyond
-        #  project scope.
+        #  Note: parsing multi-part  XML scores to write only to top line to
+        #  ABC is beyond project scope as currently defined.
 
         try:
             # Use pathlib to read the xml content as text
