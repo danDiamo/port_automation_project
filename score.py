@@ -3,6 +3,7 @@ score"""
 
 import copy
 import inspect
+import shutil
 import tempfile
 import warnings
 
@@ -19,6 +20,17 @@ from music21 import analysis, bar, key, meter, note, chord
 from music21.analysis.discrete import SimpleWeights
 from pandas.core.config_init import max_cols
 
+
+def ensure_loaded(func):
+    """Decorator function to ensure that MusicXML score content is loaded"""
+
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if self.content is None:
+            self.read_content_to_music21_stream()
+        return func(self, *args, **kwargs)
+
+    return wrapper
 
 class Score:
 
@@ -98,16 +110,6 @@ class Score:
         """Reads content from MusicXML file into a music21 Stream object."""
         self.content = music21.converter.parse(self.score_path)
 
-    def ensure_loaded(func):
-        """Ensures score content is loaded"""
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            if self.content is None:
-                self.read_content_to_music21_stream()
-            return func(self, *args, **kwargs)
-
-        return wrapper
-
     @ensure_loaded
     def _detect_key_signature_algorithmically(self):
 
@@ -182,8 +184,6 @@ class Score:
         algorithmically detected key signature. Makes note of cases where the
         two values are not in agreement.
         """
-
-        # TODO: Test
 
         key_signature = self._read_key_signature_from_score()
         detected_key = self._detect_key_signature_algorithmically()
@@ -372,14 +372,29 @@ class Score:
         return max(1, num_parts)
 
     @ensure_loaded
-    def write_score_to_midi(self, out_path):
+    def write_score_to_midi(self, out_path=None):
         """write music21 stream to MIDI file"""
 
-        # TODO: write output to AWS
+        # TODO: write output to AWS rather than local disk? Discuss w/ ITMA
 
-        score = self.content
-        output = score.write('midi', fp=out_path)
-        return output
+        # If no path is given, create a temporary one
+        if out_path is None:
+            temp_dir = Path(tempfile.gettempdir())
+            out_path = temp_dir / self.score_path.with_suffix('.mid').name
+
+        try:
+            # expand repeats (i.e.: ensure MIDI reflects all repeat markers
+            # in the score) and write to disk
+            score = self.content.expandRepeats()
+            output = score.write('midi', fp=str(out_path))
+            return output
+
+        except Exception as e:
+            # Raise error if write operation fails
+            raise RuntimeError(
+                f"Failed to write MIDI for {self.score_path.name}. "
+                f"Error: {e}"
+            ) from e
 
     def convert_score_to_abc(self):
         """Reads xml file content as text and converts to ABC Notation"""
@@ -403,15 +418,71 @@ class Score:
             self.abc = abc_content
             return abc_content
 
-        except Exception as e:
-            warnings.warn(
-                f"Failed to convert {self.score_path.name} to ABC: {e}"
-            )
 
+        except Exception as e:
+            # Chaining the exception to preserve the original error from
+            # convert_xml2abc
+            raise RuntimeError(
+                f"Failed to convert {self.score_path.name} to ABC notation. "
+                f"Internal Error: {e}"
+            ) from e
+
+    @staticmethod
+    def _check_lilypond():
+        """
+        Checks if LilyPond is installed.
+        Returns True if found, False otherwise.
+        """
+        # Explicitly passing a string 'lilypond' for Windows compatibility
+        if shutil.which(str('lilypond')) is None:
+            warnings.warn(
+                "LilyPond not found on system. PDF conversion is unavailable.",
+                UserWarning
+            )
+            return False
+        return True
+
+    @ensure_loaded
+    def convert_score_to_pdf(self, output_path=None):
+
+        """
+        Converts the score to a PDF using LilyPond as the backend.
+
+        Args:
+            output_path (Path or str): Where to save the PDF. If None,
+                                     it defaults to the score's name.
+        Returns:
+            Path: The path to the generated PDF.
+        """
+
+        if not self._check_lilypond():
             return None
 
-    def convert_score_to_pdf(self):
-        pass
+        if output_path is None:
+            output_path = self.score_path.with_suffix('.pdf')
+        else:
+            output_path = Path(output_path)
+
+        try:
+            # Fix for LilyPond 2.24+ syntax error:
+            # music21 sometimes exports Staff names as empty,
+            # so we ensure parts have names.
+            score = copy.deepcopy(self.content)
+            for i, p in enumerate(score.parts):
+                if not p.id or p.id == "":
+                    p.id = f"Part_{i + 1}"
+                if not p.partName:
+                    p.partName = f"Part {i + 1}"
+
+            # music21's write('lily.pdf') handles the LilyPond conversion.
+            generated_pdf = score.write('lily.pdf', fp=str(output_path))
+            return Path(generated_pdf)
+
+        except Exception as e:
+        # Raising an error ensures the process stops if conversion fails
+            raise RuntimeError(
+                f"Failed to convert {self.score_path.name} to PDF. Error: {e}"
+            ) from e
 
     def convert_incipit_to_midi(self):
         # may not need to be a stand-alone method (combine with method below?)

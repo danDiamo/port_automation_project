@@ -78,6 +78,14 @@ def test_read_key_signature_from_score():
     # check type of key_signature attr
     assert isinstance(default_score.key_signature, music21.key.Key)
 
+def test_find_key_signature():
+    """Test finding key signature(s) in MusicXML file"""
+
+    default_score = Score(happy_testfile)
+    default_score.read_content_to_music21_stream()
+    key_sig = default_score.find_key_signature()
+    assert isinstance(key_sig, music21.key.Key)
+
 def test_extract_tonic_from_key_signature():
     """Test extracting tonic from key signature"""
 
@@ -184,7 +192,21 @@ def test_convert_score_to_abc(tmp_path):
     assert "X:" in abc_content
     assert "K:" in abc_content
 
-# TODO: Add a test for find_key_signature()
+
+def test_convert_score_to_pdf(tmp_path, default_score):
+    """Test converting MusicXML to PDF"""
+
+    # Define an output path in the temp directory
+    output_pdf = tmp_path / "test_output.pdf"
+    # Run conversion
+    pdf_path = default_score.convert_score_to_pdf(output_path=output_pdf)
+
+    # Verify we got a Path back and the file exists on disk
+    assert pdf_path is not None
+    assert pdf_path.exists()
+    assert pdf_path.suffix == '.pdf'
+    assert pdf_path.stat().st_size > 0
+
 
     
 
