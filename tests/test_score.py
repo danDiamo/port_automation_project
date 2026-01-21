@@ -4,6 +4,7 @@ import re
 import music21.key
 import os
 import pytest
+import shutil
 
 from moto import mock_aws
 from music21 import stream
@@ -183,7 +184,6 @@ def test_write_score_to_midi(tmp_path):
     except Exception as e:
         pytest.fail(f"Could not parse the generated MIDI file: {e}")
 
-
 def test_convert_score_to_abc(tmp_path):
     """Test converting MusicXML to ABC notation"""
     default_score = Score(happy_testfile)
@@ -312,6 +312,41 @@ def test_abc_conversion_syncs_to_s3(tmp_path, default_score):
     # The ABC filename will be same as XML filename but with .abc suffix
     expected_key = default_score.score_path.with_suffix('.abc').name
     assert check_s3_object_exists("scores.itma.ie", expected_key) is True
+
+
+@mock_aws
+def test_sync_to_s3_with_organization(tmp_path):
+    """
+    Verify S3 file tree mirroring using real input data and checking both
+    content and directory structure.
+    """
+    # Setup mock S3
+    bucket_name = "scores.itma.ie"
+    create_s3_bucket(bucket_name)
+
+    # Setup a mock collection in tmp_path
+    collection_root = tmp_path / "Danny_Collection"
+    collection_root.mkdir()
+
+    # Copy our test file into the temp collection
+    target_xml = collection_root / happy_testfile.name
+    shutil.copy(happy_testfile, target_xml)
+
+    # Instantiate Score and run conversion
+    score = Score(target_xml, collection_root=collection_root)
+    svg_path = score.convert_incipit_to_svg()
+
+    # check local directory structure
+    expected_local_dir = collection_root / "Danny_Collection_svg"
+    assert svg_path.parent == expected_local_dir
+    assert svg_path.exists()
+    assert svg_path.stat().st_size > 0  # check file is not empty
+
+    # check S3 mirroring
+    # S3 should match the local relative structure
+    expected_key = \
+        f"Danny_Collection_svg/{happy_testfile.name.replace('.xml', '.svg')}"
+    assert check_s3_object_exists(bucket_name, expected_key) is True
 
 
 

@@ -41,7 +41,7 @@ def _load_score_content(func):
 
 
 def sync_to_s3(func):
-    """Decorator to upload the file returned by a method to S3."""
+    """Decorator to upload file outputs to S3."""
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
@@ -134,6 +134,24 @@ class Score:
             raise ValueError(
                 f"Unsupported file type: {self.score_path.suffix}"
             )
+
+    def _get_output_path(self, extension):
+        """
+        Helper to generate local output subdirectories by appending the
+        appropriate file extension suffix to the collection root directory name
+        per: [root dir_name]_[file_extension suffix]
+        """
+        if not self.collection_root:
+            # if no collection root is defined, use the location of the score
+            # file instead and don't create subfolders.
+            return self.score_path.with_suffix(extension)
+
+        # create subfolders
+        subfolder_name = f"{self.collection_root.name}_{extension.strip('.')}"
+        output_dir = self.collection_root / subfolder_name
+        output_dir.mkdir(exist_ok=True)
+
+        return output_dir / self.score_path.with_suffix(extension).name
 
     def read_content_to_music21_stream(self):
         """Reads content from MusicXML file into a music21 Stream object."""
@@ -423,8 +441,6 @@ class Score:
     def write_score_to_midi(self, out_path=None, stream=None):
         """write music21 stream to MIDI file"""
 
-        # TODO: write output to AWS rather than local disk? Discuss w/ ITMA
-
         # Default to full score content if no stream is provided
         # This allows us to pass both incipit (stream) and full score to
         # this method as needed.
@@ -433,15 +449,16 @@ class Score:
 
         # If no path is given, create a temporary one
         if out_path is None:
-            temp_dir = Path(tempfile.gettempdir())
-            out_path = temp_dir / self.score_path.with_suffix('.mid').name
+            out_path = self._get_output_path('.mid')
+        else:
+            out_path = Path(out_path)
 
         try:
             # expand repeats (i.e.: ensure MIDI output reflects all
             # repeat markers in the score) and write to disk
             score = stream.expandRepeats()
             score.write('midi', fp=str(out_path))
-            return Path(out_path)
+            return out_path
 
         except Exception as e:
             # Raise error if write operation fails
@@ -458,7 +475,7 @@ class Score:
         #  ABC is beyond project scope as currently defined.
 
         if output_path is None:
-            output_path = self.score_path.with_suffix('.abc')
+            output_path = self._get_output_path('.abc')
         else:
             output_path = Path(output_path)
 
@@ -500,7 +517,7 @@ class Score:
 
         # setup output path
         if output_path is None:
-            output_path = self.score_path.with_suffix('.pdf')
+            output_path = self._get_output_path('.pdf')
         else:
             output_path = Path(output_path)
 
@@ -594,7 +611,7 @@ class Score:
         if self.incipit is None:
             self.extract_incipit()
         if output_path is None:
-            output_path = self.score_path.with_suffix('.svg')
+            output_path = self._get_output_path('.svg')
         else:
             output_path = Path(output_path)
 
@@ -693,7 +710,7 @@ class Score:
             self.extract_incipit()
 
         if output_path is None:
-            output_path = self.score_path.with_suffix('.mp3')
+            output_path = self._get_output_path('.mp3')
         else:
             output_path = Path(output_path)
 
