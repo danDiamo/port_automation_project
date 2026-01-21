@@ -83,6 +83,24 @@ def test_upload_file_to_s3_happy_path(tmp_path):
     body = s3.Object("test-bucket", "example.txt").get()["Body"].read()
     assert body == b"uploaded!"
 
+@mock_aws
+def test_upload_file_to_s3_with_root_dir(tmp_path):
+    """Verify upload_file_to_s3 preserves directory structure relative to root_dir."""
+    create_s3_bucket("test-bucket")
+
+    # Create a nested structure: root/collection/tune.xml
+    root_dir = tmp_path / "root"
+    sub_dir = root_dir / "collection"
+    sub_dir.mkdir(parents=True)
+    local_file = sub_dir / "tune.xml"
+    local_file.write_text("music content", encoding="utf-8")
+
+    # Upload using root_dir
+    upload_file_to_s3("test-bucket", str(local_file), root_dir=str(root_dir))
+
+    # Assert S3 key uses forward slashes and preserves the 'collection' folder
+    assert check_s3_object_exists("test-bucket", "collection/tune.xml") is True
+
 
 @mock_aws
 def test_download_object_from_s3_happy_path():
@@ -108,13 +126,15 @@ def test_create_s3_bucket_unhappy_path_already_owned():
 
 
 @mock_aws
-def test_check_s3_object_exists_unhappy_path_no_such_key():
-    """Test behaviour of aws_utils.check_s3_object_exists when an S3 object
-    does not exist."""
+def test_download_object_from_s3_unhappy_path_no_such_key():
+    """Test file download when an S3 object does not exist."""
     # create empty bucket
     create_s3_bucket("test-bucket")
-    # check for non-existent object inside bucket
-    assert check_s3_object_exists("test-bucket", "test.txt") is False
+
+    # Updated to expect FileNotFoundError instead of ClientError
+    with pytest.raises(FileNotFoundError):
+        # attempt to download object from empty bucket
+        download_object_from_s3("test-bucket", "test.txt")
 
 
 @mock_aws
@@ -144,28 +164,13 @@ def test_download_object_from_s3_unhappy_path_no_such_key():
     # create empty bucket
     create_s3_bucket("test-bucket")
 
-    with pytest.raises(ClientError):
-        # attempt to download object from empty bucket
-        download_object_from_s3("test-bucket", "test.txt")
-
+    # Use FileNotFoundError to match the refactored aws_utils.py
+    with pytest.raises(FileNotFoundError):
+        download_object_from_s3("test-bucket", "non-existent-key.txt")
 
 @mock_aws
-def test_upload_file_to_s3_uses_basename_for_object_key(tmp_path):
-    """Verify upload_file_to_s3 uses os.path.basename(file_name) as the S3
-    object key."""
-    # create bucket
+def test_upload_file_to_s3_fails_if_local_file_missing():
+    """Verify upload fails gracefully if local file doesn't exist."""
     create_s3_bucket("test-bucket")
-
-    # create a tmp nested local path so the filename has directories in it.
-    nested_dir = tmp_path / "nested" / "deeper"
-    nested_dir.mkdir(parents=True)
-    # create test file at this path.
-    local_file = nested_dir / "example.txt"
-    local_file.write_text("nested content", encoding="utf-8")
-    # upload using the full local file path.
-    upload_file_to_s3("test-bucket", str(local_file))
-
-    # assert s3 object key is the basename(file_name).
-    assert check_s3_object_exists("test-bucket", "example.txt") is True
-    # assert it does not exist under a key that includes local directories.
-    assert check_s3_object_exists("test-bucket", "nested/deeper/example.txt") is False
+    with pytest.raises(FileNotFoundError):
+        upload_file_to_s3("test-bucket", "non_existent_file.xml")

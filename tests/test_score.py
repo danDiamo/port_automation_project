@@ -5,9 +5,12 @@ import music21.key
 import os
 import pytest
 
+from moto import mock_aws
 from music21 import stream
 from pathlib import Path
-from score import Score
+
+from aws_utils import create_s3_bucket, check_s3_object_exists
+from score import Score, sync_to_s3
 
 # Get cwd
 BASE_DIR = Path(__file__).resolve().parent
@@ -19,6 +22,10 @@ test_data_dir = (
 
 happy_testfile = test_data_dir / 'morrison_tutor_1.xml'
 sad_testfile = test_data_dir / '100684_001.mxl'
+
+# ==============================================================================
+# UNIT TESTS (Logic & Analysis)
+# ==============================================================================
 
 @pytest.fixture(autouse=True)
 def default_score():
@@ -56,7 +63,6 @@ def test_detect_key_signature_algorithmically():
     assert default_score.alt_key_signature is not None
     # check type of detected_key_sig attr
     assert isinstance(default_score.alt_key_signature, music21.key.Key)
-
 
 def test_read_key_signature_from_score():
     """Test reading key signature(s) directly from MusicXML file"""
@@ -207,7 +213,7 @@ def test_convert_score_to_pdf(tmp_path, default_score):
     assert pdf_path.stat().st_size > 0
 
 def test_convert_incipit_to_svg(tmp_path, default_score):
-    """Test converting a 4-bar incipit to a cropped SVG file"""
+    """Test converting incipit to a cropped SVG file"""
 
     # Define an output path in the temp directory
     output_svg = tmp_path / "incipit_test.svg"
@@ -236,7 +242,76 @@ def test_convert_incipit_to_mp3(tmp_path, default_score):
     # Check that the file has actual data
     assert mp3_path.stat().st_size > 0
 
-    
+    @mock_aws
+    def test_copy_musicxml_file_to_aws(tmp_path):
+        """Test uploading Score to AWS with directory mirroring."""
+        # Setup mock environment
+        bucket_name = "scores.itma.ie"
+        create_s3_bucket(bucket_name)
+
+        # Create a dummy MusicXML file in a nested local dir structure
+        collection_root = tmp_path / "ITMA_Collection"
+        sub_folder = collection_root / "Morrison_Tutor"
+        sub_folder.mkdir(parents=True)
+
+        test_xml = sub_folder / "test_score.xml"
+        test_xml.write_text("<score-partwise></score-partwise>")
+
+        # Instantiate Score object and run mock upload
+        score_obj = Score(test_xml)
+        score_obj.copy_musicxml_file_to_aws(collection_root=collection_root)
+
+        # Verify the S3 key is the same as the (local) relative path
+        # Expected key: "Morrison_Tutor/test_score.xml"
+        expected_key = "Morrison_Tutor/test_score.xml"
+        assert check_s3_object_exists(bucket_name, expected_key) is True
+
+# ==============================================================================
+# INTEGRATION TESTS (AWS & File System)
+# ==============================================================================
+
+@mock_aws
+def test_sync_to_s3_logic(tmp_path):
+    """Verifies the decorator correctly identifies and uploads a returned Path."""
+    bucket_name = "scores.itma.ie"
+    create_s3_bucket(bucket_name)
+
+    # Define a temporary collection root
+    root = tmp_path / "ITMA"
+    root.mkdir()
+    local_file = root / "folder" / "test.txt"
+    local_file.parent.mkdir()
+    local_file.write_text("data")
+
+    # Create a mock class to test the decorator in isolation
+    class MockScore:
+        def __init__(self, root):
+            self.collection_root = root
+
+        @sync_to_s3
+        def mock_method(self):
+            return local_file
+
+    tester = MockScore(root)
+    tester.mock_method()
+
+    # Assert S3 has saved the file at the correct relative path
+    assert check_s3_object_exists(bucket_name, "folder/test.txt") is True
+
+@mock_aws
+def test_abc_conversion_syncs_to_s3(tmp_path, default_score):
+    """Verifies a real Score method correctly triggers the S3 sync."""
+    create_s3_bucket("scores.itma.ie")
+
+    # Update default_score to have a collection_root
+    default_score.collection_root = default_score.score_path.parent
+
+    # Run conversion
+    default_score.convert_score_to_abc()
+
+    # The ABC filename will be same as XML filename but with .abc suffix
+    expected_key = default_score.score_path.with_suffix('.abc').name
+    assert check_s3_object_exists("scores.itma.ie", expected_key) is True
 
 
 

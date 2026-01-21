@@ -25,8 +25,10 @@ from music21 import analysis, bar, key, meter, note, chord
 from music21.analysis.discrete import SimpleWeights
 from pandas.core.config_init import max_cols
 
+from aws_utils import upload_file_to_s3
 
-def ensure_loaded(func):
+
+def _load_score_content(func):
     """Decorator function to ensure that MusicXML score content is loaded"""
 
     @wraps(func)
@@ -34,6 +36,32 @@ def ensure_loaded(func):
         if self.content is None:
             self.read_content_to_music21_stream()
         return func(self, *args, **kwargs)
+
+    return wrapper
+
+
+def sync_to_s3(func):
+    """Decorator to upload the file returned by a method to S3."""
+
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        # Run any Score method that returns a Path
+        local_path = func(self, *args, **kwargs)
+
+        # If a local root directory is provided, replicate in S3 key
+        if hasattr(self,
+                   'collection_root') and self.collection_root and local_path:
+            bucket_name = "scores.itma.ie"
+            try:
+                upload_file_to_s3(
+                    bucket_name=bucket_name,
+                    file_path=str(local_path),
+                    root_dir=str(self.collection_root)
+                )
+            except Exception as e:
+                warnings.warn(f"S3 Sync failed for {local_path}: {e}")
+
+        return local_path
 
     return wrapper
 
@@ -62,17 +90,10 @@ class Score:
     signature.
     
     """
-
-    METADATA_FIELDS = [
-        'Title',
-        'Alternative_title',
-        'Composer',
-        'Tune_type',
-    ]
     
     DEFAULT_TIME_SIG = "4/4"
 
-    def __init__(self, score_path):
+    def __init__(self, score_path, collection_root=None):
 
         """
         Initializes Score object.
@@ -82,6 +103,11 @@ class Score:
         """
 
         self.score_path = score_path
+        # allow user to define a collection root directory
+        # TODO: Consider getting attr below from Collection class in the
+        #  future?
+        self.collection_root = Path(
+            collection_root) if collection_root else None
         # ensure that score_path points to a MusicXML file
         self._validate_score_file()
         self.content = None
@@ -90,8 +116,6 @@ class Score:
         self.alt_key_signature = None
         self._keys_flag = True
         self.abc = None
-        self.metadata_path = None
-        self.metadata = None
         pass
 
     def _validate_score_file(self):
@@ -115,7 +139,7 @@ class Score:
         """Reads content from MusicXML file into a music21 Stream object."""
         self.content = music21.converter.parse(self.score_path)
 
-    @ensure_loaded
+    @_load_score_content
     def _detect_key_signature_algorithmically(self):
 
         """
@@ -155,7 +179,7 @@ class Score:
         # return human-readable version
         return str(detected_key)
 
-    @ensure_loaded
+    @_load_score_content
     def _read_key_signature_from_score(self):
         """Get any Key Signatures provided within the score"""
 
@@ -181,7 +205,7 @@ class Score:
         # return human-readable version
         return str(extracted_key)
 
-    @ensure_loaded
+    @_load_score_content
     def find_key_signature(self):
 
         """
@@ -238,7 +262,7 @@ class Score:
 
         return self.key_signature.mode
 
-    @ensure_loaded
+    @_load_score_content
     def extract_time_signature(self):
         """Extracts the time signature from the score"""
 
@@ -254,7 +278,7 @@ class Score:
         else:
             return self.DEFAULT_TIME_SIG
 
-    @ensure_loaded
+    @_load_score_content
     def extract_incipit(self):
         """Extracts a 4-bar incipit from the score"""
 
@@ -272,7 +296,7 @@ class Score:
         self.incipit = incipit
         return incipit
 
-    @ensure_loaded
+    @_load_score_content
     def create_breathnach_codes(self):
 
         """
@@ -366,7 +390,7 @@ class Score:
 
         return accented_notes
 
-    @ensure_loaded
+    @_load_score_content
     def count_number_of_parts(self):
         
         """
@@ -394,7 +418,8 @@ class Score:
         # return 1 if no additional parts detected
         return max(1, num_parts)
 
-    @ensure_loaded
+    @sync_to_s3
+    @_load_score_content
     def write_score_to_midi(self, out_path=None, stream=None):
         """write music21 stream to MIDI file"""
 
@@ -415,8 +440,8 @@ class Score:
             # expand repeats (i.e.: ensure MIDI output reflects all
             # repeat markers in the score) and write to disk
             score = stream.expandRepeats()
-            output = score.write('midi', fp=str(out_path))
-            return output
+            score.write('midi', fp=str(out_path))
+            return Path(out_path)
 
         except Exception as e:
             # Raise error if write operation fails
@@ -425,13 +450,17 @@ class Score:
                 f"Error: {e}"
             ) from e
 
-    def convert_score_to_abc(self):
+    @sync_to_s3
+    def convert_score_to_abc(self, output_path=None):
         """Reads xml file content as text and converts to ABC Notation"""
 
-        # TODO: Write output to file with an appropriate filename
-
-        #  Note: parsing multi-part  XML scores to write only to top line to
+        #  Note: parsing multi-part XML scores to extract top line and write to
         #  ABC is beyond project scope as currently defined.
+
+        if output_path is None:
+            output_path = self.score_path.with_suffix('.abc')
+        else:
+            output_path = Path(output_path)
 
         try:
             # Use pathlib to read the xml content as text
@@ -444,9 +473,9 @@ class Score:
                 file_to_convert_is_txt=True
             )
 
+            output_path.write_text(abc_content, encoding='utf-8')
             self.abc = abc_content
-            return abc_content
-
+            return output_path  # Now returns Path for the decorator
 
         except Exception as e:
             # Chaining the exception to preserve the original error from
@@ -456,22 +485,8 @@ class Score:
                 f"Internal Error: {e}"
             ) from e
 
-    @staticmethod
-    def _check_lilypond():
-        """
-        Checks if LilyPond is installed.
-        Returns True if found, False otherwise.
-        """
-        # Explicitly passing a string 'lilypond' for Windows compatibility
-        if shutil.which(str('lilypond')) is None:
-            warnings.warn(
-                "LilyPond not found on system. PDF conversion is unavailable.",
-                UserWarning
-            )
-            return False
-        return True
-
-    @ensure_loaded
+    @sync_to_s3
+    @_load_score_content
     def convert_score_to_pdf(self, output_path=None):
         """
         Converts the score to a PDF using LilyPond utilities.
@@ -548,7 +563,23 @@ class Score:
                 f"Stderr: {e.stderr}"
             ) from e
 
-    @ensure_loaded
+    @staticmethod
+    def _check_lilypond():
+        """
+        Checks if LilyPond is installed.
+        Returns True if found, False otherwise.
+        """
+        # Explicitly passing a string 'lilypond' for Windows compatibility
+        if shutil.which(str('lilypond')) is None:
+            warnings.warn(
+                "LilyPond not found on system. PDF conversion is unavailable.",
+                UserWarning
+            )
+            return False
+        return True
+
+    @sync_to_s3
+    @_load_score_content
     def convert_incipit_to_svg(self, output_path=None):
         """
         Converts the score incipit to a cropped SVG file using the LilyPond CLI
@@ -641,68 +672,8 @@ class Score:
             if standard_svg.exists() and standard_svg != output_path:
                 os.remove(standard_svg)
 
-    @staticmethod
-    def _check_fluidsynth():
-        """
-        Checks if FluidSynth is installed.
-        Returns True if found, False otherwise.
-        """
-        if shutil.which('fluidsynth') is None:
-            warnings.warn(
-                "FluidSynth not found on system. "
-                "MP3 conversion is unavailable.",
-                UserWarning
-            )
-            return False
-        return True
-
-    @staticmethod
-    def _check_ffmpeg():
-        """
-        Checks if FFmpeg is installed.
-        Returns True if found, False otherwise.
-        """
-        if shutil.which(str('ffmpeg')) is None:
-            warnings.warn(
-                "FFmpeg not found on system. MP3 conversion is unavailable.",
-                UserWarning
-            )
-            return False
-        return True
-
-    def _ensure_soundfont_exists(self):
-        """
-        Ensures the GeneralUser-GS.sf2 SoundFont is available in the assets
-        dir. If not, runs the setup script to download it.
-        """
-
-        project_root = Path(__file__).parent
-        assets_dir = project_root / "assets"
-        soundfont_path = assets_dir / "GeneralUser-GS.sf2"
-
-        if not soundfont_path.exists():
-            warnings.warn("SoundFont not found. Attempting to download...",
-                          UserWarning)
-            setup_soundfont = project_root / "setup_general_user_gs.py"
-
-            if not setup_soundfont.exists():
-                raise FileNotFoundError(
-                    f"SoundFont setup helper not found at {setup_soundfont}")
-
-            # Run the setup script
-            subprocess.run(
-                [sys.executable, str(setup_soundfont)],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-
-        if not soundfont_path.exists():
-            raise RuntimeError("Failed to obtain SoundFont.")
-
-        return soundfont_path
-
-    @ensure_loaded
+    @sync_to_s3
+    @_load_score_content
     def convert_incipit_to_mp3(self, output_path=None):
         """
         Converts the incipit to an MP3 file using FluidSynth (via CLI) and the
@@ -786,27 +757,118 @@ class Score:
                 if p.exists():
                     os.remove(p)
 
+    @staticmethod
+    def _check_fluidsynth():
+        """
+        Checks if FluidSynth is installed.
+        Returns True if found, False otherwise.
+        """
+        if shutil.which('fluidsynth') is None:
+            warnings.warn(
+                "FluidSynth not found on system. "
+                "MP3 conversion is unavailable.",
+                UserWarning
+            )
+            return False
+        return True
 
-def copy_musicxml_file_to_aws(self):
-        # use as first step in AWS testing -- possibly make into a
-        # input-agnostic helper method (or maybe just use BOTO3 setter?)
+    @staticmethod
+    def _check_ffmpeg():
+        """
+        Checks if FFmpeg is installed.
+        Returns True if found, False otherwise.
+        """
+        if shutil.which(str('ffmpeg')) is None:
+            warnings.warn(
+                "FFmpeg not found on system. MP3 conversion is unavailable.",
+                UserWarning
+            )
+            return False
+        return True
+
+    def _ensure_soundfont_exists(self):
+        """
+        Ensures the GeneralUser-GS.sf2 SoundFont is available in the assets
+        dir. If not, runs the setup script to download it.
+        """
+
+        project_root = Path(__file__).parent
+        assets_dir = project_root / "assets"
+        soundfont_path = assets_dir / "GeneralUser-GS.sf2"
+
+        if not soundfont_path.exists():
+            warnings.warn("SoundFont not found. Attempting to download...",
+                          UserWarning)
+            setup_soundfont = project_root / "setup_general_user_gs.py"
+
+            if not setup_soundfont.exists():
+                raise FileNotFoundError(
+                    f"SoundFont setup helper not found at {setup_soundfont}")
+
+            # Run the setup script
+            subprocess.run(
+                [sys.executable, str(setup_soundfont)],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+
+        if not soundfont_path.exists():
+            raise RuntimeError("Failed to obtain SoundFont.")
+
+        return soundfont_path
+
+    def copy_musicxml_file_to_aws(self, collection_root: Path):
+        """
+        Uploads the MusicXML score to the 'scores.itma.ie' S3 bucket,
+        preserving the local directory structure relative to the collection
+        root dir.
+        """
+        from aws_utils import upload_file_to_s3
+
+        # Hardcoded bucket as per ITMA requirements
+        bucket_name = "scores.itma.ie"
+
+        try:
+            upload_file_to_s3(
+                bucket_name=bucket_name,
+                file_path=str(self.score_path),
+                root_dir=str(collection_root)
+            )
+        except Exception as e:
+            # Wrap the error with score-specific context
+            raise RuntimeError(
+                f"Failed to copy {self.score_path.name} to AWS: {e}"
+            )
+
+# functions below will be in a separate ScoreMetadata class.
+# Global below will be a ScoreMetadata class constant
+
+    # METADATA_FIELDS = [
+    #     'Title',
+    #     'Alternative_title',
+    #     'Composer',
+    #     'Tune_type',
+    # ]
+
+def read_score_metadata_from_csv(self, metadata_path):
+    self.metadata_path = metadata_path
+    self.metadata = pd.read_csv(self.metadata_path)
+    # TODO: Extract single row of metadata corresponding to the score
+    #  being processed.
     pass
 
-    def read_score_metadata_from_csv(self, metadata_path):
-        self.metadata_path = metadata_path
-        self.metadata = pd.read_csv(self.metadata_path)
-        # TODO: Extract single row of metadata corresponding to the score
-        #  being processed.
-        pass
+def _extract_metadata_field(self, field_name):
+    # private helper method acting on self.metadata DataFrame
+    pass
 
-    def _extract_metadata_field(self, field_name):
-        # private helper method acting on self.metadata DataFrame
-        pass
+def extract_metadata(self):
+    # TODO: call _extract_metadata_field for fields listed in
+    #  METADATA_FIELDS class constant
+    pass
 
-    def extract_metadata(self):
-        # TODO: call _extract_metadata_field for fields listed in
-        #  METADATA_FIELDS class constant
-        pass
+# We need to plan how to build the Soundslice functionality
+
 
 
 
