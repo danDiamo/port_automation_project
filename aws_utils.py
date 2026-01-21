@@ -2,7 +2,7 @@
 This file contains Python functions that use the boto3 library to connect to
 Amazon AWS in Python using CLI credentials.
 
-Note: Much of this functionality ultimately will be replaced by direct calls
+Note: Much of this functionality may be replaced by direct calls
 to the AWS CLI.
 """
 
@@ -21,7 +21,7 @@ AWS_REGION = os.getenv("AWS_DEFAULT_REGION")
 
 def _s3_resource():
     """
-    Small helper to hardcode use of boto3.resource (not boto3.client)
+    Small helper to hardcode use of boto3.resource (i.e. not boto3.client)
     and the 'eu-west-1' AWS region.
     """
     # Hardcode our region in case it's not given in .env
@@ -40,7 +40,7 @@ def create_s3_bucket(bucket_name: str) -> str:
             CreateBucketConfiguration={"LocationConstraint": AWS_REGION},
         )
     except ClientError as e:
-        # If the bucket already exists and is owned by us, return its name along with the error.
+        # If the bucket exists, return its name along with the error.
         error_code = (e.response or {}).get("Error", {}).get("Code", "")
         if error_code == "BucketAlreadyOwnedByYou":
             return bucket_name
@@ -58,7 +58,6 @@ def check_s3_object_exists(bucket_name: str, object_key: str) -> bool:
         # if load() does not find an object, boto3 raises ClientError.
         obj.load()
         # If no exception was raised, the object exists.
-        # TODO: print obj name
         return True
     except ClientError as e:
         # Return False for "file not found" style errors.
@@ -75,7 +74,7 @@ def list_s3_objects(bucket_name: str) -> List[str]:
 
     keys: List[str] = []
     try:
-        # Attempting to iterate will detect if the bucket exists
+        # Attempting to iterate will check if the bucket exists
         # a ClientError should be raised if it does not.
         for obj_summary in bucket.objects.all():
             keys.append(obj_summary.key)
@@ -88,8 +87,8 @@ def list_s3_objects(bucket_name: str) -> List[str]:
 def upload_file_to_s3(bucket_name: str, file_path: str, root_dir: str = None):
     """
     Uploads a file to an S3 bucket.
-    root_dir allows the user to preserve local directory structure relative to
-     a user-defined root, in the form of AWS prefixes.
+    Allows the user to preserve local directory structure in the form of
+    AWS prefixes.
     """
 
     if not os.path.isfile(file_path):
@@ -99,9 +98,6 @@ def upload_file_to_s3(bucket_name: str, file_path: str, root_dir: str = None):
 
     if root_dir:
         # Calculate relative path:
-        # e.g., root="C:/Music",
-        # file="C:/Music/Jigs/tune.xml"
-        # -> key="Jigs/tune.xml"
         object_key = os.path.relpath(file_path, root_dir).replace("\\", "/")
     else:
         object_key = os.path.basename(file_path)
@@ -111,7 +107,6 @@ def upload_file_to_s3(bucket_name: str, file_path: str, root_dir: str = None):
             s3.Object(bucket_name, object_key).put(Body=f)
     except ClientError:
         raise
-
 
 def download_object_from_s3(bucket_name: str, object_key: str) -> bytes:
     """Downloads an object from an S3 bucket efficiently."""

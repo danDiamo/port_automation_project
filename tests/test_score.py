@@ -33,15 +33,18 @@ def default_score():
     """Provides a standard User instance for testing."""
     return Score(happy_testfile)
 
+
 def test_score_path(default_score):
     # Test init of Score object using happy_testfile
     assert isinstance(default_score, Score)
+
 
 def test_loading_content(default_score):
     """Test reading score content to Music21 stream"""
     # Load test class instance
     default_score.read_content_to_music21_stream()
     assert isinstance(default_score.content, stream.Stream)
+
 
 def test_detect_key_signature_algorithmically():
     """Test our usage of Music21's algorithmic key signature detection"""
@@ -65,6 +68,7 @@ def test_detect_key_signature_algorithmically():
     # check type of detected_key_sig attr
     assert isinstance(default_score.alt_key_signature, music21.key.Key)
 
+
 def test_read_key_signature_from_score():
     """Test reading key signature(s) directly from MusicXML file"""
     default_score = Score(happy_testfile)
@@ -85,6 +89,7 @@ def test_read_key_signature_from_score():
     # check type of key_signature attr
     assert isinstance(default_score.key_signature, music21.key.Key)
 
+
 def test_find_key_signature():
     """Test finding key signature(s) in MusicXML file"""
 
@@ -92,6 +97,7 @@ def test_find_key_signature():
     default_score.read_content_to_music21_stream()
     key_sig = default_score.find_key_signature()
     assert isinstance(key_sig, music21.key.Key)
+
 
 def test_extract_tonic_from_key_signature():
     """Test extracting tonic from key signature"""
@@ -102,6 +108,7 @@ def test_extract_tonic_from_key_signature():
     tonic = default_score.extract_tonic_from_key_signature()
     assert isinstance(tonic, str)
 
+
 def test_extract_mode_from_key_signature():
     """Test extracting mode from key signature"""
 
@@ -110,6 +117,7 @@ def test_extract_mode_from_key_signature():
     default_score._detect_key_signature_algorithmically()
     mode = default_score.extract_mode_from_key_signature()
     assert isinstance(mode, str)
+
 
 def test_extract_time_signature():
     """Test extracting time signature from score"""
@@ -128,6 +136,7 @@ def test_extract_time_signature():
             and time_sig_elements[0].isdigit()
             and time_sig_elements[1].isdigit())
 
+
 def test_extract_incipit():
     """Test extracting incipit from score"""
 
@@ -137,6 +146,7 @@ def test_extract_incipit():
     incipit = default_score.extract_incipit()
     measures = incipit.getElementsByClass('Measure')
     assert isinstance(incipit, music21.stream.Stream) and len(measures) == 4
+
 
 def test_create_breathnach_codes():
     """Test creating Breathnach codes"""
@@ -148,6 +158,7 @@ def test_create_breathnach_codes():
     test_codes = default_score.create_breathnach_codes()
     assert all(isinstance(x, int) and 1 <= x <= 7 for x in test_codes)
 
+
 def test_count_number_of_parts():
     """Test counting the number of parts in a tune"""
 
@@ -155,6 +166,7 @@ def test_count_number_of_parts():
     default_score.read_content_to_music21_stream()
 
     assert default_score.count_number_of_parts() == 2
+
 
 def test_write_score_to_midi(tmp_path):
     """Test writing a music21 Stream object to MIDI"""
@@ -184,6 +196,7 @@ def test_write_score_to_midi(tmp_path):
     except Exception as e:
         pytest.fail(f"Could not parse the generated MIDI file: {e}")
 
+
 def test_convert_score_to_abc(tmp_path):
     """Test converting MusicXML to ABC notation"""
     default_score = Score(happy_testfile)
@@ -197,6 +210,7 @@ def test_convert_score_to_abc(tmp_path):
     # Verify basic ABC structure (X: is the reference number, K: is the key)
     assert "X:" in abc_content
     assert "K:" in abc_content
+
 
 def test_convert_score_to_pdf(tmp_path, default_score):
     """Test converting MusicXML to PDF"""
@@ -212,6 +226,7 @@ def test_convert_score_to_pdf(tmp_path, default_score):
     assert pdf_path.suffix == '.pdf'
     assert pdf_path.stat().st_size > 0
 
+
 def test_convert_incipit_to_svg(tmp_path, default_score):
     """Test converting incipit to a cropped SVG file"""
 
@@ -225,6 +240,7 @@ def test_convert_incipit_to_svg(tmp_path, default_score):
     assert svg_path.exists()
     assert svg_path.suffix == '.svg'
     assert svg_path.stat().st_size > 0
+
 
 def test_convert_incipit_to_mp3(tmp_path, default_score):
     """Test converting incipit to an MP3 file"""
@@ -241,6 +257,7 @@ def test_convert_incipit_to_mp3(tmp_path, default_score):
     assert mp3_path.suffix == '.mp3'
     # Check that the file has actual data
     assert mp3_path.stat().st_size > 0
+
 
     @mock_aws
     def test_copy_musicxml_file_to_aws(tmp_path):
@@ -297,6 +314,7 @@ def test_sync_to_s3_logic(tmp_path):
 
     # Assert S3 has saved the file at the correct relative path
     assert check_s3_object_exists(bucket_name, "folder/test.txt") is True
+
 
 @mock_aws
 def test_abc_conversion_syncs_to_s3(tmp_path, default_score):

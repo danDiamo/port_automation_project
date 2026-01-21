@@ -83,6 +83,7 @@ def test_upload_file_to_s3_happy_path(tmp_path):
     body = s3.Object("test-bucket", "example.txt").get()["Body"].read()
     assert body == b"uploaded!"
 
+
 @mock_aws
 def test_upload_file_to_s3_with_root_dir(tmp_path):
     """Verify upload_file_to_s3 preserves directory structure relative to root_dir."""
@@ -167,6 +168,7 @@ def test_download_object_from_s3_unhappy_path_no_such_key():
     # Use FileNotFoundError to match the refactored aws_utils.py
     with pytest.raises(FileNotFoundError):
         download_object_from_s3("test-bucket", "non-existent-key.txt")
+
 
 @mock_aws
 def test_upload_file_to_s3_fails_if_local_file_missing():
