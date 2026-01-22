@@ -360,8 +360,7 @@ def test_sync_to_s3_with_organization(tmp_path):
     assert svg_path.exists()
     assert svg_path.stat().st_size > 0  # check file is not empty
 
-    # check S3 mirroring
-    # S3 should match the local relative structure
+    # check S3 mirroring matches the local relative dir structure
     expected_key = \
         f"Danny_Collection_svg/{happy_testfile.name.replace('.xml', '.svg')}"
     assert check_s3_object_exists(bucket_name, expected_key) is True

@@ -7,9 +7,9 @@ AWS CLI.
 """
 
 from aws_utils import (
-    check_s3_object_exists,
+    check_s3_file_exists,
     create_s3_bucket,
-    download_object_from_s3,
+    download_file_from_s3,
     list_s3_objects,
     upload_file_to_s3,
 )
@@ -45,14 +45,14 @@ def test_create_s3_bucket_happy_path():
 
 
 @mock_aws
-def test_check_s3_object_exists_happy_path():
+def test_check_s3_file_exists_happy_path():
     """Test checking if an S3 object exists."""
     s3 = _s3_resource()
     create_s3_bucket("test-bucket")
     # create mock object
     s3.Object("test-bucket", "folder/example.txt").put(Body=b"hello")
 
-    assert check_s3_object_exists("test-bucket", "folder/example.txt") is True
+    assert check_s3_file_exists("test-bucket", "folder/example.txt") is True
 
 
 @mock_aws
@@ -78,7 +78,7 @@ def test_upload_file_to_s3_happy_path(tmp_path):
     local_file.write_text("uploaded!", encoding="utf-8")
     # Upload using filename obj key
     upload_file_to_s3("test-bucket", str(local_file))
-    assert check_s3_object_exists("test-bucket", "example.txt") is True
+    assert check_s3_file_exists("test-bucket", "example.txt") is True
     # read file content from s3 & check it matches
     body = s3.Object("test-bucket", "example.txt").get()["Body"].read()
     assert body == b"uploaded!"
@@ -100,18 +100,18 @@ def test_upload_file_to_s3_with_root_dir(tmp_path):
     upload_file_to_s3("test-bucket", str(local_file), root_dir=str(root_dir))
 
     # Assert S3 key uses forward slashes and preserves the 'collection' folder
-    assert check_s3_object_exists("test-bucket", "collection/tune.xml") is True
+    assert check_s3_file_exists("test-bucket", "collection/tune.xml") is True
 
 
 @mock_aws
-def test_download_object_from_s3_happy_path():
+def test_download_file_from_s3_happy_path():
     """Test downloading an object from an S3 bucket."""
     s3 = _s3_resource()
     create_s3_bucket("test-bucket")
     # create mock object
     s3.Object("test-bucket", "data.bin").put(Body=b"\x00\x01\x02")
     # dowload and check content
-    data = download_object_from_s3("test-bucket", "data.bin")
+    data = download_file_from_s3("test-bucket", "data.bin")
     assert data == b"\x00\x01\x02"
 
 
@@ -127,7 +127,7 @@ def test_create_s3_bucket_unhappy_path_already_owned():
 
 
 @mock_aws
-def test_download_object_from_s3_unhappy_path_no_such_key():
+def test_download_file_from_s3_unhappy_path_no_such_key():
     """Test file download when an S3 object does not exist."""
     # create empty bucket
     create_s3_bucket("test-bucket")
@@ -135,7 +135,7 @@ def test_download_object_from_s3_unhappy_path_no_such_key():
     # Updated to expect FileNotFoundError instead of ClientError
     with pytest.raises(FileNotFoundError):
         # attempt to download object from empty bucket
-        download_object_from_s3("test-bucket", "test.txt")
+        download_file_from_s3("test-bucket", "test.txt")
 
 
 @mock_aws
@@ -160,14 +160,14 @@ def test_upload_file_to_s3_unhappy_path_no_such_bucket(tmp_path):
 
 
 @mock_aws
-def test_download_object_from_s3_unhappy_path_no_such_key():
+def test_download_file_from_s3_unhappy_path_no_such_key():
     """Test file download when an S3 object does not exist."""
     # create empty bucket
     create_s3_bucket("test-bucket")
 
     # Use FileNotFoundError to match the refactored aws_utils.py
     with pytest.raises(FileNotFoundError):
-        download_object_from_s3("test-bucket", "non-existent-key.txt")
+        download_file_from_s3("test-bucket", "non-existent-key.txt")
 
 
 @mock_aws

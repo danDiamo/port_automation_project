@@ -49,7 +49,7 @@ def create_s3_bucket(bucket_name: str) -> str:
     return bucket_name
 
 
-def check_s3_object_exists(bucket_name: str, object_key: str) -> bool:
+def check_s3_file_exists(bucket_name: str, object_key: str) -> bool:
     """Checks if an S3 object exists."""
     s3 = _s3_resource()
     obj = s3.Object(bucket_name, object_key)
@@ -108,7 +108,7 @@ def upload_file_to_s3(bucket_name: str, file_path: str, root_dir: str = None):
     except ClientError:
         raise
 
-def download_object_from_s3(bucket_name: str, object_key: str) -> bytes:
+def download_file_from_s3(bucket_name: str, object_key: str) -> bytes:
     """Downloads an object from an S3 bucket efficiently."""
     s3 = _s3_resource()
     obj = s3.Object(bucket_name, object_key)

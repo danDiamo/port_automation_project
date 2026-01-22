@@ -45,10 +45,10 @@ def sync_to_s3(func):
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        # Run any Score method that returns a Path
+        # Run any method from the Score class that returns a Path
         local_path = func(self, *args, **kwargs)
 
-        # If a local root directory is provided, replicate in S3 key
+        # If a user-defined local root directory is given, mirror in S3
         if hasattr(self,
                    'collection_root') and self.collection_root and local_path:
             bucket_name = "scores.itma.ie"
@@ -79,16 +79,17 @@ class Score:
     Attributes:
 
     score_path -- path to a MusicXML music score file.
+    collection_root -- local root directory for storing output files.
     content -- music21 Stream object representing the musical content.
     incipit -- music21 Stream object representing the 4-bar incipit.
+    key_signature -- music21 KeySignature object representing the key given
+    in the score.
+    alt_key_signature -- music21 KeySignature object representing the key
+    detected via the Krumhansl-Schmuckler algorithm.
+    _keys_flag -- private boolean indicating whether the
+    algorithmically-detected key matches the key given in the score
     metadata_path -- path to a csv file containing metadata for the score.
     abc -- ABC notation representation of the score.
-
-    Properties:
-
-    extracted_key -- music21 KeySignature object representing the key
-    signature.
-    
     """
     
     DEFAULT_TIME_SIG = "4/4"
@@ -242,6 +243,7 @@ class Score:
 
         return self.key_signature
 
+    @_load_score_content
     def extract_tonic_from_key_signature(self):
 
         # TODO: write output to csv
@@ -263,6 +265,7 @@ class Score:
 
         return self.key_signature.tonic.name
 
+    @_load_score_content
     def extract_mode_from_key_signature(self):
         """Extracts the mode from the score's key signature property"""
 
@@ -309,7 +312,34 @@ class Score:
             )
         # return first 4 bars of top melody line
         topline = content.parts[0]
-        incipit = topline.measures(1, 4)
+
+        def _is_incomplete_bar(bar: music21.stream.Measure) -> bool:
+            """
+            Helper to identify and skip any pick-ups improperly encoded as
+            first bar in the MusicXML-Music21 converion process.
+            Returns True if bar is shorter than the duration indicated in the
+             time signature.
+            """
+            if bar is None:
+                return False
+
+            time_sig = bar.timeSignature or bar.getContextByClass(
+                meter.TimeSignature)
+            if time_sig is None:
+                # Keep the bar if we don't know the time sig
+                return False
+
+            expected_qL = time_sig.barDuration.quarterLength
+            actual_qL = bar.duration.quarterLength
+
+            return actual_qL < expected_qL
+
+        first_bar = topline.measure(1)
+        if _is_incomplete_bar(first_bar):
+            # Take the next 4 bars to ensure we have an accurate incipit.
+            incipit = topline.measures(2, 5)
+        else:
+            incipit = topline.measures(1, 4)
 
         self.incipit = incipit
         return incipit
@@ -858,15 +888,16 @@ class Score:
                 f"Failed to copy {self.score_path.name} to AWS: {e}"
             )
 
-# functions below will be in a separate ScoreMetadata class.
-# Global below will be a ScoreMetadata class constant
+# functions outlined below will be stored in a separate ScoreMetadata class.
+# List below will be a ScoreMetadata class constant
 
-    # METADATA_FIELDS = [
-    #     'Title',
-    #     'Alternative_title',
-    #     'Composer',
-    #     'Tune_type',
-    # ]
+    METADATA_FIELDS = [
+        'Title',
+        'Alternative_title',
+        'Composer',
+        'Tune_type',
+        'Federated_search_term'
+    ]
 
 def read_score_metadata_from_csv(self, metadata_path):
     self.metadata_path = metadata_path
