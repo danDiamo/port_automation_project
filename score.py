@@ -1,5 +1,5 @@
-"""This file will hold a 'Score' Python class, modeling a single digital music
-score"""
+"""This file holds a 'Score' class (with helper functions), modeling a single
+digital music score."""
 
 # TODO: type hinting
 
@@ -18,7 +18,7 @@ from collections import Counter
 from functools import wraps
 from pathlib import Path
 
-# external library imports
+# external imports
 import music21
 import pandas as pd
 from dotenv import load_dotenv
@@ -30,6 +30,7 @@ from soundsliceapi import Client, Constants
 
 # local imports
 from aws_utils import upload_file_to_s3
+from soundslice_utils import get_soundslice_credentials_from_env
 
 # Load .env to access API credentials
 load_dotenv()
@@ -956,7 +957,7 @@ class Score:
         # dir.
         folder_name = self.collection_root.name
         # load API credentials
-        application_id, password = self._get_soundslice_credentials_from_env()
+        application_id, password = get_soundslice_credentials_from_env()
         client = Client(application_id, password)
 
         # Manage folder id lookups via class-level cache

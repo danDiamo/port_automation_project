@@ -1,9 +1,7 @@
 """
-This file holds unit tests for the aws_utils module. Our use of the AWS boto3
+This file holds unit tests for aws_utils.py. Our use of the AWS boto3
 Python library means we no longer need to connect to AWS via the CLI app.
 
-Note: much of this content may ultimately be superseded by direct calls to the
-AWS CLI.
 """
 
 from aws_utils import (

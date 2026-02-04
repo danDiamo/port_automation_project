@@ -1,16 +1,17 @@
-"""This file holds unit tests for the Score class."""
-import re
+"""This file holds unit tests for score.py."""
 
+# built-in imports
 import music21.key
 import os
 import pytest
+import re
 import secrets
 import shutil
-
+# external imports
 from moto import mock_aws
 from music21 import stream
 from pathlib import Path
-
+# local imports
 from aws_utils import create_s3_bucket, check_s3_file_exists
 from score import Score, sync_to_s3
 import score as score_module
@@ -347,14 +348,15 @@ def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
                 "create_folder() should not be called"
                 " when _folder_id is provided"
             )
+
     # use pytest's built-in mocking
     monkeypatch.setattr(
-        Score,
-        "_get_soundslice_credentials_from_env",
-        staticmethod(lambda: (
+        score_module,
+        "get_soundslice_credentials_from_env",
+        lambda: (
             "APPLICATION_ID_PLACEHOLDER",
-            "PASSWORD_PLACEHOLDER"
-        )),
+            "PASSWORD_PLACEHOLDER",
+        ),
     )
 
     monkeypatch.setattr(score_module, "Client", FakeClient)
@@ -459,7 +461,9 @@ def test_sync_to_s3_with_organization(tmp_path):
 
     # check local directory structure & file contents
     expected_local_dir = collection_root / "Danny_Collection_svg"
-    expected_local_svg = expected_local_dir / target_xml.with_suffix(".svg").name
+    expected_local_svg = (expected_local_dir /
+                          target_xml.with_suffix(".svg").name
+                          )
     assert expected_local_svg.parent == expected_local_dir
     assert expected_local_svg.exists()
     assert expected_local_svg.stat().st_size > 0  # check file is not empty
@@ -471,7 +475,10 @@ def test_sync_to_s3_with_organization(tmp_path):
 
 
 @pytest.mark.integration
-def test_create_soundslice_slice_and_get_embed_url_integration(tmp_path, monkeypatch):
+def test_create_soundslice_slice_and_get_embed_url_integration(
+        tmp_path,
+        monkeypatch
+):
     """
     Integration test (runs on real Soundslice API):
       - creates a unique folder
@@ -553,14 +560,16 @@ def test_create_soundslice_slice_and_get_embed_url_integration(tmp_path, monkeyp
         assert url.startswith("https://www.soundslice.com")
         assert "/embed" in url
 
-        assert created["scorehash"], "Did not capture scorehash from create_slice response."
-        assert created["folder_id"], "Did not capture folder_id from create_slice call."
+        assert created["scorehash"], \
+            "Did not capture scorehash from create_slice response."
+        assert created["folder_id"], \
+            "Did not capture folder_id from create_slice call."
 
     # cleanup
     finally:
         try:
             from soundsliceapi import Client as CleanupClient
-            app_id, pwd = Score._get_soundslice_credentials_from_env()
+            app_id, pwd = score_module.get_soundslice_credentials_from_env()
             cleanup_client = CleanupClient(app_id, pwd)
 
             if created.get("scorehash"):
