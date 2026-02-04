@@ -11,8 +11,7 @@ import os
 
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
-from typing import List
-
+from typing import List, Optional, Dict
 
 # Securely load AWS credentials from .env file
 load_dotenv()
@@ -84,11 +83,19 @@ def list_s3_objects(bucket_name: str) -> List[str]:
     return keys
 
 
-def upload_file_to_s3(bucket_name: str, file_path: str, root_dir: str = None):
+def upload_file_to_s3(
+        bucket_name: str,
+        file_path: str,
+        root_dir: str = None
+) -> str:
     """
-    Uploads a file to an S3 bucket.
+    Uploads a file to an S3 bucket and returns the uploaded object's key.
+
     Allows the user to preserve local directory structure in the form of
-    AWS prefixes.
+    AWS prefixes by providing root_dir.
+
+    Returns:
+        object_key: The S3 object key used for the upload.
     """
 
     if not os.path.isfile(file_path):
@@ -105,6 +112,7 @@ def upload_file_to_s3(bucket_name: str, file_path: str, root_dir: str = None):
     try:
         with open(file_path, "rb") as f:
             s3.Object(bucket_name, object_key).put(Body=f)
+        return object_key
     except ClientError:
         raise
 
@@ -124,3 +132,45 @@ def download_file_from_s3(bucket_name: str, object_key: str) -> bytes:
                 f"S3 object '{object_key}' not found in bucket '{bucket_name}'"
             )
         raise
+
+
+def copy_mp3_to_aws(
+        mp3_path: Optional[str],
+        collection_root: str,
+        bucket_name: str = "scores.itma.ie"
+) -> Optional[str]:
+    """
+    Upload a single MP3 file to S3 (scores.itma.ie), mirroring the local
+    directory structure relative to collection_root.
+
+    This is a small convenience wrapper around upload_file_to_s3 that:
+      - accepts optional input (None -> returns None)
+      - validates .mp3 file extension
+      - returns an s3:// URI
+
+    Args:
+        mp3_path: Path to a local .mp3 file (or None if not provided).
+        collection_root: Local root directory used to compute the S3 key.
+        bucket_name: Defaults to the project's hardcoded bucket.
+
+    Returns:
+        S3 URI string (s3://bucket/key.mp3), or None if mp3_path is None.
+    """
+
+    if mp3_path is None:
+        return None
+
+    if not str(mp3_path).lower().endswith(".mp3"):
+        raise ValueError(f"Expected an .mp3 file, got: {mp3_path}")
+
+    try:
+        object_key = upload_file_to_s3(
+            bucket_name=bucket_name,
+            file_path=str(mp3_path),
+            root_dir=str(collection_root)
+        )
+        return f"s3://{bucket_name}/{object_key}"
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to copy MP3 to AWS ({mp3_path}): {e}"
+        ) from e

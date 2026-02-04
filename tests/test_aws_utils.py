@@ -8,6 +8,7 @@ AWS CLI.
 
 from aws_utils import (
     check_s3_file_exists,
+    copy_mp3_to_aws,
     create_s3_bucket,
     download_file_from_s3,
     list_s3_objects,
@@ -77,7 +78,8 @@ def test_upload_file_to_s3_happy_path(tmp_path):
     local_file = tmp_path / "example.txt"
     local_file.write_text("uploaded!", encoding="utf-8")
     # Upload using filename obj key
-    upload_file_to_s3("test-bucket", str(local_file))
+    object_key = upload_file_to_s3("test-bucket", str(local_file))
+    assert object_key == "example.txt"
     assert check_s3_file_exists("test-bucket", "example.txt") is True
     # read file content from s3 & check it matches
     body = s3.Object("test-bucket", "example.txt").get()["Body"].read()
@@ -86,7 +88,8 @@ def test_upload_file_to_s3_happy_path(tmp_path):
 
 @mock_aws
 def test_upload_file_to_s3_with_root_dir(tmp_path):
-    """Verify upload_file_to_s3 preserves directory structure relative to root_dir."""
+    """Verify upload_file_to_s3 preserves directory structure relative to
+    root_dir."""
     create_s3_bucket("test-bucket")
 
     # Create a nested structure: root/collection/tune.xml
@@ -115,7 +118,27 @@ def test_download_file_from_s3_happy_path():
     assert data == b"\x00\x01\x02"
 
 
+@mock_aws
+def test_copy_mp3_to_aws_happy_path_with_root_dir_mirroring(tmp_path):
+    """Verify MP3 upload mirrors local directory structure"""
+    create_s3_bucket("scores.itma.ie")
+
+    collection_root = tmp_path / "MyCollection"
+    mp3_dir = collection_root / "MyCollection_mp3"
+    mp3_dir.mkdir(parents=True)
+
+    local_mp3 = mp3_dir / "track.mp3"
+    local_mp3.write_bytes(b"ID3fake_mp3_data")
+
+    uri = copy_mp3_to_aws(str(local_mp3), collection_root=str(collection_root))
+
+    expected_key = "MyCollection_mp3/track.mp3"
+    assert uri == f"s3://scores.itma.ie/{expected_key}"
+    assert check_s3_file_exists("scores.itma.ie", expected_key) is True
+
+
 # --- Unhappy Path Tests ---
+
 
 @mock_aws
 def test_create_s3_bucket_unhappy_path_already_owned():
@@ -176,3 +199,23 @@ def test_upload_file_to_s3_fails_if_local_file_missing():
     create_s3_bucket("test-bucket")
     with pytest.raises(FileNotFoundError):
         upload_file_to_s3("test-bucket", "non_existent_file.xml")
+
+
+@mock_aws
+def test_copy_mp3_to_aws_returns_none_if_no_file_provided(tmp_path):
+    """If no MP3 is provided, the helper should return None (no-op)."""
+    create_s3_bucket("scores.itma.ie")
+    result = copy_mp3_to_aws(None, collection_root=str(tmp_path))
+    assert result is None
+
+
+@mock_aws
+def test_copy_mp3_to_aws_fails_if_not_mp3(tmp_path):
+    """Verify the helper rejects non-mp3 file types."""
+    create_s3_bucket("scores.itma.ie")
+
+    not_mp3 = tmp_path / "audio.wav"
+    not_mp3.write_text("not really wav", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        copy_mp3_to_aws(str(not_mp3), collection_root=str(tmp_path))

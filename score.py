@@ -1,6 +1,8 @@
 """This file will hold a 'Score' Python class, modeling a single digital music
 score"""
 
+# TODO: type hinting
+
 # built-in imports
 import copy
 import inspect
@@ -11,7 +13,7 @@ import sys
 import subprocess
 import tempfile
 import warnings
-
+import secrets
 from collections import Counter
 from functools import wraps
 from pathlib import Path
@@ -19,13 +21,18 @@ from pathlib import Path
 # external library imports
 import music21
 import pandas as pd
-
+from dotenv import load_dotenv
 from abc_xml_converter import convert_xml2abc
 from music21 import analysis, bar, key, meter, note, chord
 from music21.analysis.discrete import SimpleWeights
 from pandas.core.config_init import max_cols
+from soundsliceapi import Client, Constants
 
+# local imports
 from aws_utils import upload_file_to_s3
+
+# Load .env to access API credentials
+load_dotenv()
 
 
 def _load_score_content(func):
@@ -46,28 +53,33 @@ def sync_to_s3(func):
     @wraps(func)
     def wrapper(self, *args, **kwargs):
         # Run any method from the Score class that returns a Path
-        local_path = func(self, *args, **kwargs)
+        filepath = func(self, *args, **kwargs)
 
         # If a user-defined local root directory is given, mirror in S3
-        if hasattr(self,
-                   'collection_root') and self.collection_root and local_path:
+        if (hasattr(self, 'collection_root') and self.collection_root and
+                filepath):
             bucket_name = "scores.itma.ie"
             try:
                 upload_file_to_s3(
                     bucket_name=bucket_name,
-                    file_path=str(local_path),
+                    file_path=str(filepath),
                     root_dir=str(self.collection_root)
                 )
-            except Exception as e:
-                warnings.warn(f"S3 Sync failed for {local_path}: {e}")
+                object_key = filepath.relative_to(
+                    self.collection_root).as_posix()
+                # return AWS filepath as str
+                return f"s3://{bucket_name}/{object_key}"
 
-        return local_path
+            except Exception as e:
+                warnings.warn(f"S3 Sync failed for {filepath}: {e}")
+                return filepath
+
+        return filepath
 
     return wrapper
 
 class Score:
-
-    # TODO: type hinting
+    # TODO: repr / title
 
     """
     Score class object represents a digital music score encoded as a MusicXML
@@ -93,6 +105,9 @@ class Score:
     """
     
     DEFAULT_TIME_SIG = "4/4"
+
+    # shared cache to track Soundslice folder IDs for all Score class instances
+    _soundslice_folder_id_cache: dict[str, int] = {}
 
     def __init__(self, score_path, collection_root=None):
 
@@ -313,6 +328,7 @@ class Score:
         # return first 4 bars of top melody line
         topline = content.parts[0]
 
+
         def _is_incomplete_bar(bar: music21.stream.Measure) -> bool:
             """
             Helper to identify and skip any pick-ups improperly encoded as
@@ -334,6 +350,7 @@ class Score:
 
             return actual_qL < expected_qL
 
+
         first_bar = topline.measure(1)
         if _is_incomplete_bar(first_bar):
             # Take the next 4 bars to ensure we have an accurate incipit.
@@ -352,7 +369,8 @@ class Score:
         sequences representing rhythmically-emphasised notes in the incipit.
         """
 
-        # TODO: write to csv
+        # TODO: store output in ScoreMetadata  field
+        # TODO: format ouput per 'XXXX_XXXX'
 
         # read / extract incipit
         if self.incipit is None:
@@ -450,7 +468,7 @@ class Score:
         running this function.
         """
 
-        #  TODO: write output to csv
+        #  TODO: output to metadata
 
         score = self.content
 
@@ -522,7 +540,7 @@ class Score:
 
             output_path.write_text(abc_content, encoding='utf-8')
             self.abc = abc_content
-            return output_path  # Now returns Path for the decorator
+            return output_path
 
         except Exception as e:
             # Chaining the exception to preserve the original error from
@@ -865,68 +883,178 @@ class Score:
 
         return soundfont_path
 
-    def copy_musicxml_file_to_aws(self, collection_root: Path):
+    def copy_musicxml_file_to_aws(self, collection_root: Path) -> str:
         """
         Uploads the MusicXML score to the 'scores.itma.ie' S3 bucket,
         preserving the local directory structure relative to the collection
         root dir.
-        """
-        from aws_utils import upload_file_to_s3
 
+        Returns:
+            S3 URI to the uploaded object (e.g. s3://bucket/prefix/file.xml)
+        """
         # Hardcoded bucket as per ITMA requirements
         bucket_name = "scores.itma.ie"
 
         try:
+            # Mirror local directory structure relative to collection_root
+            object_key = self.score_path.relative_to(
+                collection_root).as_posix()
+
             upload_file_to_s3(
                 bucket_name=bucket_name,
                 file_path=str(self.score_path),
                 root_dir=str(collection_root)
             )
+
+            # return s3 path
+            return f"s3://{bucket_name}/{object_key}"
+
         except Exception as e:
-            # Wrap the error with score-specific context
             raise RuntimeError(
                 f"Failed to copy {self.score_path.name} to AWS: {e}"
+            ) from e
+
+    def create_soundslice_slice_and_get_embed_url(
+            self,
+            *,
+            collection_metadata,
+            slug: str,
+            _folder_id: int | None = None,
+    ) -> str:
+        """
+        Creates a slice in the collection's Soundslice folder, adds MusicXML,
+        populates title from metadata (lookup by unique id / slug), and returns
+        the Soundslice embed URL string.
+
+        Internal optimization:
+            If _folder_id is provided, no list_folders() calls are made.
+            This is safe for parallel processing.
+
+        Note: artist is intentionally an empty string for now. This may
+        change if passthrough audio is confirmed as a requirement.
+        """
+
+        # validate slug
+        slug = str(slug).strip()
+        if not slug:
+            raise ValueError("slug must be a non-empty string.")
+        # validate collection_metadata
+        if not hasattr(collection_metadata, "get_score_metadata"):
+            raise TypeError(
+                "collection_metadata arg must be CollectionMetadata object."
+            )
+        # load & read score metadata
+        score_metadata = collection_metadata.get_score_metadata(slug)
+        score_name = str(score_metadata.get("Title") or "").strip()
+        if not score_name:
+            raise RuntimeError(f"Title field is missing/blank for {slug}.")
+
+        if not self.collection_root:
+            raise RuntimeError("Collection root directory must be set to "
+                               "proceed.")
+        # set Soundslice folder name to mirror name of local collection root
+        # dir.
+        folder_name = self.collection_root.name
+        # load API credentials
+        application_id, password = self._get_soundslice_credentials_from_env()
+        client = Client(application_id, password)
+
+        # Manage folder id lookups via class-level cache
+        folder_id: int | None = _folder_id
+        if folder_id is None:
+            folder_id = self._soundslice_folder_id_cache.get(folder_name)
+
+        # Resolve folder ID; create Soundslice folder if needed
+        if folder_id is None:
+            def _find_folder_id() -> int | None:
+                for f in client.list_folders():
+                    if f.get("name") == folder_name:
+                        fid = f.get("id")
+                        return int(fid) if fid is not None else None
+                return None
+
+            folder_id = _find_folder_id()
+            # manage folder creation for parallel processing
+            if folder_id is None:
+                try:
+                    client.create_folder(name=folder_name)
+                except Exception as e:
+                    # Fail fast EXCEPT for the expected race case.
+                    msg = str(e).lower()
+                    race_ok = any(
+                        needle in msg
+                        for needle in (
+                            "already exists",
+                            "already have",
+                            "duplicate",
+                            "conflict",
+                            "409",
+                        )
+                    )
+                    if not race_ok:
+                        raise RuntimeError(
+                            f"Failed to create Soundslice folder"
+                            f" '{folder_name}': {e}"
+                        ) from e
+
+                folder_id = _find_folder_id()
+
+            if folder_id is None:
+                raise RuntimeError(
+                    f"Failed to resolve Soundslice folder id for "
+                    f"'{folder_name}'."
+                )
+
+            self._soundslice_folder_id_cache[folder_name] = folder_id
+
+        # create slice
+        try:
+            new_slice = client.create_slice(
+                name=score_name,
+                artist=folder_name,
+                has_shareable_url=True,
+                embed_status=Constants.EMBED_STATUS_ON_ALLOWLIST,
+                can_print=True,
+                folder_id=folder_id,
             )
 
-# functions outlined below will be stored in a separate ScoreMetadata class.
-# List below will be a ScoreMetadata class constant
+            # upload MusicXML file
+            scorehash = new_slice["scorehash"]
+            with self.score_path.open("rb") as fp:
+                client.upload_slice_notation(scorehash=scorehash, fp=fp)
 
-    METADATA_FIELDS = [
-        'Title',
-        'Alternative_title',
-        'Composer',
-        'Tune_type',
-        'Federated_search_term'
-    ]
+            # get embed url
+            embed_path = new_slice.get("embed_url")
+            if not embed_path:
+                raise RuntimeError("Soundslice API did not return embed_url.")
 
-def read_score_metadata_from_csv(self, metadata_path):
-    self.metadata_path = metadata_path
-    self.metadata = pd.read_csv(self.metadata_path)
-    # TODO: Extract single row of metadata corresponding to the score
-    #  being processed.
-    pass
+            return f"https://www.soundslice.com{embed_path}"
 
-def _extract_metadata_field(self, field_name):
-    # private helper method acting on self.metadata DataFrame
-    pass
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to create Soundslice slice for "
+                f"{self.score_path.name}: {e}"
+            ) from e
 
-def extract_metadata(self):
-    # TODO: call _extract_metadata_field for fields listed in
-    #  METADATA_FIELDS class constant
-    pass
+    @staticmethod
+    def _get_soundslice_credentials_from_env() -> tuple[str, str]:
+        """
+        Get Soundslice credentials from .env.
 
-# We need to plan how to build the Soundslice functionality
+        Required keys (internal naming convention -- please do not break
+        these field names if updating credentials!):
+          - APPLICATION_ID
+          - PASSWORD
+        """
 
+        app_id = os.getenv("APPLICATION_ID")
+        pwd = os.getenv("PASSWORD")
 
+        if not app_id or not pwd:
+            raise RuntimeError(
+                "Soundslice credentials not found. Ensure the project .env "
+                "contains APPLICATION_ID and PASSWORD fields for Soundslice"
+            )
 
-
-
-
-
-
-
-
-
-
-
+        return app_id, pwd
 

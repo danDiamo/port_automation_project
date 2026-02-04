@@ -4,14 +4,16 @@ import re
 import music21.key
 import os
 import pytest
+import secrets
 import shutil
 
 from moto import mock_aws
 from music21 import stream
 from pathlib import Path
 
-from aws_utils import create_s3_bucket, check_s3_object_exists
+from aws_utils import create_s3_bucket, check_s3_file_exists
 from score import Score, sync_to_s3
+import score as score_module
 
 # Get cwd
 BASE_DIR = Path(__file__).resolve().parent
@@ -202,12 +204,16 @@ def test_convert_score_to_abc(tmp_path):
     default_score = Score(happy_testfile)
 
     # Test XML-ABC conversion
-    abc_content = default_score.convert_score_to_abc()
-    # Verify we got a string back
-    assert isinstance(abc_content, str)
-    assert len(abc_content) > 0
+    abc_path = default_score.convert_score_to_abc()
+
+    # Verify we got a Path back and the file exists
+    assert isinstance(abc_path, Path)
+    assert abc_path.exists()
+    assert abc_path.suffix == ".abc"
+    assert abc_path.stat().st_size > 0
 
     # Verify basic ABC structure (X: is the reference number, K: is the key)
+    abc_content = abc_path.read_text(encoding="utf-8")
     assert "X:" in abc_content
     assert "K:" in abc_content
 
@@ -258,30 +264,121 @@ def test_convert_incipit_to_mp3(tmp_path, default_score):
     # Check that the file has actual data
     assert mp3_path.stat().st_size > 0
 
+@mock_aws
+def test_copy_musicxml_file_to_aws(tmp_path):
+    """Test uploading Score to AWS."""
+    # Setup mock environment
+    bucket_name = "scores.itma.ie"
+    create_s3_bucket(bucket_name)
 
-    @mock_aws
-    def test_copy_musicxml_file_to_aws(tmp_path):
-        """Test uploading Score to AWS with directory mirroring."""
-        # Setup mock environment
-        bucket_name = "scores.itma.ie"
-        create_s3_bucket(bucket_name)
+    # Create a nested local dir structure under a temp collection root
+    collection_root = tmp_path / "ITMA_Collection"
+    sub_folder = collection_root / "Morrison_Tutor"
+    sub_folder.mkdir(parents=True)
 
-        # Create a dummy MusicXML file in a nested local dir structure
-        collection_root = tmp_path / "ITMA_Collection"
-        sub_folder = collection_root / "Morrison_Tutor"
-        sub_folder.mkdir(parents=True)
+    # Copy the established test MusicXML file into that structure
+    target_xml = sub_folder / happy_testfile.name
+    shutil.copy(happy_testfile, target_xml)
 
-        test_xml = sub_folder / "test_score.xml"
-        test_xml.write_text("<score-partwise></score-partwise>")
+    # Instantiate Score object and run mock upload
+    score_obj = Score(target_xml)
+    s3_uri = score_obj.copy_musicxml_file_to_aws(collection_root=collection_root)
 
-        # Instantiate Score object and run mock upload
-        score_obj = Score(test_xml)
-        score_obj.copy_musicxml_file_to_aws(collection_root=collection_root)
+    # Verify the S3 key is the same as the (local) relative path
+    expected_key = f"Morrison_Tutor/{happy_testfile.name}"
+    assert check_s3_file_exists(bucket_name, expected_key) is True
 
-        # Verify the S3 key is the same as the (local) relative path
-        # Expected key: "Morrison_Tutor/test_score.xml"
-        expected_key = "Morrison_Tutor/test_score.xml"
-        assert check_s3_object_exists(bucket_name, expected_key) is True
+    # Verify the returned S3 URI matches the uploaded object location
+    assert str(s3_uri) == f"s3://{bucket_name}/{expected_key}"
+
+
+def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
+    """Soundslice unit test: no network. Verifies mock client calls & returned
+    embed URL."""
+
+    # Create a temp collection folder and copy a real MusicXML file into it
+    collection_root = tmp_path / "Test_Collection"
+    collection_root.mkdir()
+    test_score_path = collection_root / happy_testfile.name
+    shutil.copy(happy_testfile, test_score_path)
+    #
+    test_score = Score(test_score_path, collection_root=collection_root)
+
+    class FakeCollectionMetadata:
+        def get_score_metadata(self, slug: str) -> dict:
+            assert slug == "unit-slug"
+            return {"Title": "Unit Test Title"}
+
+    class FakeConstants:
+        # Mocks Soundslice constants
+        EMBED_STATUS_ON_ALLOWLIST = 999
+
+    calls = {"create_slice": [], "upload": []}
+
+    class FakeClient:
+        # Mocks Soundslice client connections
+        def __init__(self, application_id: str, password: str):
+            # Ensure unit test does not use real env creds
+            assert application_id == "APPLICATION_ID_PLACEHOLDER"
+            assert password == "PASSWORD_PLACEHOLDER"
+
+        def create_slice(self, **kwargs):
+            calls["create_slice"].append(kwargs)
+            return {"scorehash": "scorehash_123", "embed_url": "/slices/scorehash_123/embed/"}
+
+        def upload_slice_notation(self, *, scorehash: str, fp):
+            # Ensure we actually attempted to upload bytes from the score file
+            chunk = fp.read(32)
+            assert scorehash == "scorehash_123"
+            assert isinstance(chunk, (bytes, bytearray))
+            assert len(chunk) > 0
+            calls["upload"].append({"scorehash": scorehash})
+
+        # These exist on the real client, but shouldn't be called
+        # when _folder_id is provided
+        def list_folders(self):
+            raise AssertionError(
+                "list_folders() should not be called"
+                " when _folder_id is provided"
+            )
+
+        def create_folder(self, name: str):
+            raise AssertionError(
+                "create_folder() should not be called"
+                " when _folder_id is provided"
+            )
+    # use pytest's built-in mocking
+    monkeypatch.setattr(
+        Score,
+        "_get_soundslice_credentials_from_env",
+        staticmethod(lambda: (
+            "APPLICATION_ID_PLACEHOLDER",
+            "PASSWORD_PLACEHOLDER"
+        )),
+    )
+
+    monkeypatch.setattr(score_module, "Client", FakeClient)
+    monkeypatch.setattr(score_module, "Constants", FakeConstants)
+
+    # run
+    url = test_score.create_soundslice_slice_and_get_embed_url(
+        collection_metadata=FakeCollectionMetadata(),
+        slug="unit-slug",
+        _folder_id=123,
+    )
+
+    # Asserts
+    assert url == "https://www.soundslice.com/slices/scorehash_123/embed/"
+    assert len(calls["create_slice"]) == 1
+    assert len(calls["upload"]) == 1
+
+    kwargs = calls["create_slice"][0]
+    assert kwargs["name"] == "Unit Test Title"
+    assert kwargs["artist"] == collection_root.name
+    assert kwargs["folder_id"] == 123
+    assert kwargs["has_shareable_url"] is True
+    assert kwargs["can_print"] is True
+    assert kwargs["embed_status"] == FakeConstants.EMBED_STATUS_ON_ALLOWLIST
 
 # ==============================================================================
 # INTEGRATION TESTS (AWS & File System)
@@ -313,29 +410,35 @@ def test_sync_to_s3_logic(tmp_path):
     tester.mock_method()
 
     # Assert S3 has saved the file at the correct relative path
-    assert check_s3_object_exists(bucket_name, "folder/test.txt") is True
+    assert check_s3_file_exists(bucket_name, "folder/test.txt") is True
 
 
 @mock_aws
 def test_abc_conversion_syncs_to_s3(tmp_path, default_score):
-    """Verifies a real Score method correctly triggers the S3 sync."""
+    """Verifies writing Score method outputs to S3 & capturing S3 paths."""
     create_s3_bucket("scores.itma.ie")
 
     # Update default_score to have a collection_root
     default_score.collection_root = default_score.score_path.parent
 
-    # Run conversion
-    default_score.convert_score_to_abc()
+    # Run conversion (should return S3 URI when collection_root is set)
+    abc_uri = default_score.convert_score_to_abc()
 
-    # The ABC filename will be same as XML filename but with .abc suffix
-    expected_key = default_score.score_path.with_suffix('.abc').name
-    assert check_s3_object_exists("scores.itma.ie", expected_key) is True
+    # Local output path convention is:
+    # {collection_root.name}_abc/<filename>.abc
+    expected_key = (
+        f"{default_score.collection_root.name}_abc/"
+        f"{default_score.score_path.with_suffix('.abc').name}"
+    )
+
+    assert abc_uri == f"s3://scores.itma.ie/{expected_key}"
+    assert check_s3_file_exists("scores.itma.ie", expected_key) is True
 
 
 @mock_aws
 def test_sync_to_s3_with_organization(tmp_path):
     """
-    Verify S3 file tree mirroring using real input data and checking both
+    Verify S3 file tree mirroring using real input data, checking both
     content and directory structure.
     """
     # Setup mock S3
@@ -352,18 +455,124 @@ def test_sync_to_s3_with_organization(tmp_path):
 
     # Instantiate Score and run conversion
     score = Score(target_xml, collection_root=collection_root)
-    svg_path = score.convert_incipit_to_svg()
+    incipit_svg_uri = score.convert_incipit_to_svg()
 
-    # check local directory structure
+    # check local directory structure & file contents
     expected_local_dir = collection_root / "Danny_Collection_svg"
-    assert svg_path.parent == expected_local_dir
-    assert svg_path.exists()
-    assert svg_path.stat().st_size > 0  # check file is not empty
+    expected_local_svg = expected_local_dir / target_xml.with_suffix(".svg").name
+    assert expected_local_svg.parent == expected_local_dir
+    assert expected_local_svg.exists()
+    assert expected_local_svg.stat().st_size > 0  # check file is not empty
 
     # check S3 mirroring matches the local relative dir structure
-    expected_key = \
-        f"Danny_Collection_svg/{happy_testfile.name.replace('.xml', '.svg')}"
-    assert check_s3_object_exists(bucket_name, expected_key) is True
+    expected_key = f"Danny_Collection_svg/{expected_local_svg.name}"
+    assert incipit_svg_uri == f"s3://{bucket_name}/{expected_key}"
+    assert check_s3_file_exists(bucket_name, expected_key) is True
+
+
+@pytest.mark.integration
+def test_create_soundslice_slice_and_get_embed_url_integration(tmp_path, monkeypatch):
+    """
+    Integration test (runs on real Soundslice API):
+      - creates a unique folder
+      - creates a slice and uploads the MusicXML
+      - returns an embed URL
+      - cleans up slice & folder
+
+    To run this test, set the following environment variables in .env:
+      RUN_SOUNDSLICE_INTEGRATION_TESTING=y
+      APPLICATION_ID, PASSWORD
+    """
+
+    if os.getenv("RUN_SOUNDSLICE_INTEGRATION_TESTING") != "y":
+        pytest.skip(
+            "Set RUN_SOUNDSLICE_INTEGRATION_TESTING=y"
+            " to run Soundslice integration tests."
+        )
+
+    if not os.getenv("APPLICATION_ID") or not os.getenv("PASSWORD"):
+        pytest.skip("Missing Soundslice credentials. "
+                    "Set APPLICATION_ID and PASSWORD in .env.")
+
+    # set up temp local paths
+    folder_name = f"PYTEST_{secrets.token_hex(8)}"
+    collection_root = tmp_path / folder_name
+    collection_root.mkdir()
+
+    score_path = collection_root / happy_testfile.name
+    shutil.copy(happy_testfile, score_path)
+    score = Score(score_path, collection_root=collection_root)
+
+    # set up fake metadata
+    class FakeCollectionMetadata:
+        def get_score_metadata(self, slug: str) -> dict:
+            return {"Title": f"Pytest Slice {slug}"}
+
+    created = {"folder_id": None, "scorehash": None}
+
+    #setup Soundslice Client
+    RealClient = score_module.Client
+
+    # Class to manage Soundslice API interactions
+    class CapturingClient:
+        def __init__(self, application_id: str, password: str):
+            self._real = RealClient(application_id, password)
+
+        def list_folders(self):
+            return self._real.list_folders()
+
+        def create_folder(self, name: str):
+            return self._real.create_folder(name=name)
+
+        def create_slice(self, **kwargs):
+            created["folder_id"] = kwargs.get("folder_id")
+            resp = self._real.create_slice(**kwargs)
+            created["scorehash"] = resp.get("scorehash")
+            return resp
+
+        def upload_slice_notation(self, *, scorehash: str, fp):
+            return self._real.upload_slice_notation(scorehash=scorehash, fp=fp)
+
+        def delete_slice(self, scorehash: str):
+            return self._real.delete_slice(scorehash)
+
+        def delete_folder(self, *, folder_id: int):
+            return self._real.delete_folder(folder_id=folder_id)
+
+    monkeypatch.setattr(score_module, "Client", CapturingClient)
+
+    # run test
+    try:
+        url = score.create_soundslice_slice_and_get_embed_url(
+            collection_metadata=FakeCollectionMetadata(),
+            slug="integration-slug",
+            _folder_id=None,
+        )
+
+        assert isinstance(url, str)
+        assert url.startswith("https://www.soundslice.com")
+        assert "/embed" in url
+
+        assert created["scorehash"], "Did not capture scorehash from create_slice response."
+        assert created["folder_id"], "Did not capture folder_id from create_slice call."
+
+    # cleanup
+    finally:
+        try:
+            from soundsliceapi import Client as CleanupClient
+            app_id, pwd = Score._get_soundslice_credentials_from_env()
+            cleanup_client = CleanupClient(app_id, pwd)
+
+            if created.get("scorehash"):
+                cleanup_client.delete_slice(created["scorehash"])
+
+            if created.get("folder_id"):
+                cleanup_client.delete_folder(
+                    folder_id=int(created["folder_id"])
+                )
+
+        except Exception as cleanup_err:
+            print(f"Soundslice cleanup warning (non-fatal): {cleanup_err}")
 
 
 
