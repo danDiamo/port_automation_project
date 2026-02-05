@@ -104,7 +104,7 @@ class Score:
     metadata_path -- path to a csv file containing metadata for the score.
     abc -- ABC notation representation of the score.
     """
-    
+
     DEFAULT_TIME_SIG = "4/4"
 
     # shared cache to track Soundslice folder IDs for all Score class instances
@@ -459,13 +459,13 @@ class Score:
 
     @_load_score_content
     def count_number_of_parts(self):
-        
+
         """
         Applies a simple heuristic: double barlines & final barlines are
         taken as indicators of part structure; their occurrences in the
         score are counted, giving the number of parts.
-        
-        This is not foolproof and a manual pass may be required after 
+
+        This is not foolproof and a manual pass may be required after
         running this function.
         """
 
@@ -919,7 +919,7 @@ class Score:
             self,
             *,
             collection_metadata,
-            slug: str,
+            itma_id: str,
             _folder_id: int | None = None,
     ) -> str:
         """
@@ -936,7 +936,7 @@ class Score:
         """
 
         # validate slug
-        slug = str(slug).strip()
+        slug = str(itma_id).strip()
         if not slug:
             raise ValueError("slug must be a non-empty string.")
         # validate collection_metadata
@@ -945,8 +945,8 @@ class Score:
                 "collection_metadata arg must be CollectionMetadata object."
             )
         # load & read score metadata
-        score_metadata = collection_metadata.get_score_metadata(slug)
-        score_name = str(score_metadata.get("Title") or "").strip()
+        score_metadata = collection_metadata.get_score_metadata(itma_id)
+        score_name = str(score_metadata.get("title") or "").strip()
         if not score_name:
             raise RuntimeError(f"Title field is missing/blank for {slug}.")
 
@@ -1012,7 +1012,7 @@ class Score:
         try:
             new_slice = client.create_slice(
                 name=score_name,
-                artist=folder_name,
+                artist='',
                 has_shareable_url=True,
                 embed_status=Constants.EMBED_STATUS_ON_ALLOWLIST,
                 can_print=True,
@@ -1036,26 +1036,3 @@ class Score:
                 f"Failed to create Soundslice slice for "
                 f"{self.score_path.name}: {e}"
             ) from e
-
-    @staticmethod
-    def _get_soundslice_credentials_from_env() -> tuple[str, str]:
-        """
-        Get Soundslice credentials from .env.
-
-        Required keys (internal naming convention -- please do not break
-        these field names if updating credentials!):
-          - APPLICATION_ID
-          - PASSWORD
-        """
-
-        app_id = os.getenv("APPLICATION_ID")
-        pwd = os.getenv("PASSWORD")
-
-        if not app_id or not pwd:
-            raise RuntimeError(
-                "Soundslice credentials not found. Ensure the project .env "
-                "contains APPLICATION_ID and PASSWORD fields for Soundslice"
-            )
-
-        return app_id, pwd
-

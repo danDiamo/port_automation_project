@@ -306,9 +306,9 @@ def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
     test_score = Score(test_score_path, collection_root=collection_root)
 
     class FakeCollectionMetadata:
-        def get_score_metadata(self, slug: str) -> dict:
-            assert slug == "unit-slug"
-            return {"Title": "Unit Test Title"}
+        def get_score_metadata(self, itma_id: str) -> dict:
+            assert itma_id == "unit-slug"
+            return {"title": "Unit Test Title"}
 
     class FakeConstants:
         # Mocks Soundslice constants
@@ -325,28 +325,26 @@ def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
 
         def create_slice(self, **kwargs):
             calls["create_slice"].append(kwargs)
-            return {"scorehash": "scorehash_123", "embed_url": "/slices/scorehash_123/embed/"}
+            return {
+                "scorehash": "scorehash_123",
+                "embed_url": "/slices/scorehash_123/embed/",
+            }
 
         def upload_slice_notation(self, *, scorehash: str, fp):
-            # Ensure we actually attempted to upload bytes from the score file
             chunk = fp.read(32)
             assert scorehash == "scorehash_123"
             assert isinstance(chunk, (bytes, bytearray))
             assert len(chunk) > 0
             calls["upload"].append({"scorehash": scorehash})
 
-        # These exist on the real client, but shouldn't be called
-        # when _folder_id is provided
         def list_folders(self):
             raise AssertionError(
-                "list_folders() should not be called"
-                " when _folder_id is provided"
+                "list_folders() should not be called when _folder_id is provided"
             )
 
         def create_folder(self, name: str):
             raise AssertionError(
-                "create_folder() should not be called"
-                " when _folder_id is provided"
+                "create_folder() should not be called when _folder_id is provided"
             )
 
     # use pytest's built-in mocking
@@ -365,7 +363,7 @@ def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
     # run
     url = test_score.create_soundslice_slice_and_get_embed_url(
         collection_metadata=FakeCollectionMetadata(),
-        slug="unit-slug",
+        itma_id="unit-slug",
         _folder_id=123,
     )
 
@@ -376,7 +374,7 @@ def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
 
     kwargs = calls["create_slice"][0]
     assert kwargs["name"] == "Unit Test Title"
-    assert kwargs["artist"] == collection_root.name
+    assert kwargs["artist"] == ""  # intentionally left blank
     assert kwargs["folder_id"] == 123
     assert kwargs["has_shareable_url"] is True
     assert kwargs["can_print"] is True
@@ -512,8 +510,8 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
 
     # set up fake metadata
     class FakeCollectionMetadata:
-        def get_score_metadata(self, slug: str) -> dict:
-            return {"Title": f"Pytest Slice {slug}"}
+        def get_score_metadata(self, itma_id: str) -> dict:
+            return {"title": f"Pytest Slice {itma_id}"}
 
     created = {"folder_id": None, "scorehash": None}
 
@@ -552,7 +550,7 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
     try:
         url = score.create_soundslice_slice_and_get_embed_url(
             collection_metadata=FakeCollectionMetadata(),
-            slug="integration-slug",
+            itma_id="integration-slug",
             _folder_id=None,
         )
 
