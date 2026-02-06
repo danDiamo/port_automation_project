@@ -25,7 +25,7 @@ def test_create_score_metadata_row_update_happy_path():
     smd.set("soundslice_iframe", "https://www.soundslice.com/slices/x/embed/")
     smd.update({"time_signature": "4/4"})
 
-    row_update = smd.as_row_update()
+    row_update = smd.update_row()
 
     assert isinstance(row_update, dict)
     assert list(row_update.keys()) == ["alpha"]
