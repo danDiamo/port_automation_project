@@ -62,16 +62,13 @@ METADATA_FIELDS = {
 PRESERVE_FIELDS = {
     # we do not edit or overwrite content in these fields
     "slug",
-    "title",
     "alternative_title",
     "composer",
     "summary",
     "main_textbox",
     "score_track_title",
-    "score_track_mp3",
     "score_track_catalog_url",
     "score_track2_title",
-    "score_track2_mp3",
     "score_track2_catalog_url",
     "video_url",
     "video_title",
@@ -79,6 +76,7 @@ PRESERVE_FIELDS = {
     "related_entries",
     "tune_type",
     "explore_tag",
+    "federated_search_term"
 }
 
 OVERWRITE_FIELDS = {
@@ -87,7 +85,8 @@ OVERWRITE_FIELDS = {
     "collection_tag",
     "score_track_rights",
     "score_track2_rights",
-
+    # editable but only under strictly-enforced conditions (only if empty)
+    "title",
     # pipeline-generated assets / embeds
     "featured_image",
     "pdf_download",
@@ -95,16 +94,17 @@ OVERWRITE_FIELDS = {
     "midi_audio_full",
     "incipit_audio",
     "musicxml",
+    "score_track_mp3",
+    "score_track2_mp3",
 
     # pipeline-derived analysis / representations
-    "federated_search_term",
     "key_signature",
     "mode",
     "tonic",
     "time_signature",
     "number_of_parts",
     "abc_notation",
-    "bb_code",
+    "bb_code"
 }
 
 CONSTANTS = {

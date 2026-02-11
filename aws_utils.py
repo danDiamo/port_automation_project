@@ -6,6 +6,8 @@ Note: Much of this functionality may be replaced by direct calls
 to the AWS CLI.
 """
 
+# TODO: Add helper to list content under a specific prefix within a bucket?
+
 import boto3
 import os
 
@@ -104,8 +106,14 @@ def upload_file_to_s3(
     s3 = _s3_resource()
 
     if root_dir:
-        # Calculate relative path:
         object_key = os.path.relpath(file_path, root_dir).replace("\\", "/")
+
+        # Prevent keys that escape the intended root (e.g. ../..)
+        if object_key == ".." or object_key.startswith("../"):
+            raise ValueError(
+                f"Refusing to upload file outside root_dir. "
+                f"file_path={file_path!r} root_dir={root_dir!r}"
+            )
     else:
         object_key = os.path.basename(file_path)
 
@@ -174,3 +182,4 @@ def copy_mp3_to_aws(
         raise RuntimeError(
             f"Failed to copy MP3 to AWS ({mp3_path}): {e}"
         ) from e
+

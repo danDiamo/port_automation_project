@@ -2,30 +2,29 @@
 digital music score."""
 
 # TODO: type hinting
+# TODO: move helper functions to a separate file?
 
 # built-in imports
 import copy
-import inspect
 import os
 import platform
+import re
 import shutil
 import sys
 import subprocess
 import tempfile
 import warnings
-import secrets
-from collections import Counter
+import xml.etree.ElementTree as ET
 from functools import wraps
 from pathlib import Path
+from typing import Any
 
 # external imports
 import music21
-import pandas as pd
 from dotenv import load_dotenv
 from abc_xml_converter import convert_xml2abc
-from music21 import analysis, bar, key, meter, note, chord
+from music21 import bar, key, meter, note
 from music21.analysis.discrete import SimpleWeights
-from pandas.core.config_init import max_cols
 from soundsliceapi import Client, Constants
 
 # local imports
@@ -42,7 +41,7 @@ def _load_score_content(func):
     @wraps(func)
     def wrapper(self, *args, **kwargs):
         if self.content is None:
-            self.read_content_to_music21_stream()
+            self._read_content_to_music21_stream()
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -61,13 +60,13 @@ def sync_to_s3(func):
                 filepath):
             bucket_name = "scores.itma.ie"
             try:
+                s3_root = self.collection_root.parent
                 upload_file_to_s3(
                     bucket_name=bucket_name,
                     file_path=str(filepath),
-                    root_dir=str(self.collection_root)
+                    root_dir=str(s3_root)
                 )
-                object_key = filepath.relative_to(
-                    self.collection_root).as_posix()
+                object_key = filepath.relative_to(s3_root).as_posix()
                 # return AWS filepath as str
                 return f"s3://{bucket_name}/{object_key}"
 
@@ -80,7 +79,7 @@ def sync_to_s3(func):
     return wrapper
 
 class Score:
-    # TODO: repr / title
+    # TODO: custom repr via title?
 
     """
     Score class object represents a digital music score encoded as a MusicXML
@@ -95,12 +94,7 @@ class Score:
     collection_root -- local root directory for storing output files.
     content -- music21 Stream object representing the musical content.
     incipit -- music21 Stream object representing the 4-bar incipit.
-    key_signature -- music21 KeySignature object representing the key given
-    in the score.
-    alt_key_signature -- music21 KeySignature object representing the key
-    detected via the Krumhansl-Schmuckler algorithm.
-    _keys_flag -- private boolean indicating whether the
-    algorithmically-detected key matches the key given in the score
+    key_signature -- key signature encoded/detected in the score.
     metadata_path -- path to a csv file containing metadata for the score.
     abc -- ABC notation representation of the score.
     """
@@ -117,12 +111,11 @@ class Score:
 
         Args:
             score_path -- path to a MusicXML music score file.
+            collection_root -- local root directory.
         """
 
         self.score_path = score_path
         # allow user to define a collection root directory
-        # TODO: Consider getting attr below from Collection class in the
-        #  future?
         self.collection_root = Path(
             collection_root) if collection_root else None
         # ensure that score_path points to a MusicXML file
@@ -130,18 +123,15 @@ class Score:
         self.content = None
         self.incipit = None
         self.key_signature = None
-        self.alt_key_signature = None
-        self._keys_flag = True
         self.abc = None
+        self.title = None
         pass
 
     def _validate_score_file(self):
-
         """
         Private helper method to validate that score_path points to a
         MusicXML file.
         """
-
         # first, check that score_path points to a file
         if not self.score_path.is_file():
             raise FileNotFoundError(f"{self.score_path} is not a valid file.")
@@ -156,7 +146,12 @@ class Score:
         """
         Helper to generate local output subdirectories by appending the
         appropriate file extension suffix to the collection root directory name
-        per: [root dir_name]_[file_extension suffix]
+        per: <collection_root>_<file_extension suffix>
+
+        E.G.
+            collection_root = "my_collection"
+            extension = ".mp3"
+            output_path = "my_collection/my_collection_mp3"
         """
         if not self.collection_root:
             # if no collection root is defined, use the location of the score
@@ -166,142 +161,226 @@ class Score:
         # create subfolders
         subfolder_name = f"{self.collection_root.name}_{extension.strip('.')}"
         output_dir = self.collection_root / subfolder_name
-        output_dir.mkdir(exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         return output_dir / self.score_path.with_suffix(extension).name
 
-    def read_content_to_music21_stream(self):
-        """Reads content from MusicXML file into a music21 Stream object."""
+    def _read_content_to_music21_stream(self):
+        """
+        Reads content from MusicXML file into a music21 Stream object
+        and updates/sets Stream title according to self.title attr
+        """
         self.content = music21.converter.parse(self.score_path)
+        self._add_title_to_music21_stream()
+
+    def _resolve_title(
+            self,
+            *,
+            collection_metadata: Any | None = None,
+            itma_id: str | None = None,
+    ) -> str:
+        """
+        Resolve 'title' field content from collection metadata:
+         - Lookup score title by ITMA id val stored in 'slug' metadata field.
+        - Fall back to '[untitled]' and warn the user if no title is given or
+        detected.
+        """
+        itma_id = (itma_id or self.score_path.stem or "").strip()
+
+        getter = (
+            getattr(collection_metadata, "get_score_metadata", None)
+            if collection_metadata is not None
+            else None
+        )
+
+        title: str = "[untitled]"
+
+        # If we have metadata, try to look up title, otherwise throw error.
+        if callable(getter):
+            if not itma_id:
+                raise ValueError(
+                    f"Cannot load title for score {itma_id!r}: ITMA id slug is"
+                    " blank/empty."
+                )
+
+            try:
+                row = getter(itma_id)
+            except KeyError as e:
+                raise KeyError(
+                    f"Metadata lookup failed: no record found for score {
+                    itma_id!r}."
+                ) from e
+
+            if isinstance(row, dict):
+                candidate = str(row.get("title") or "").strip()
+                if candidate:
+                    title = candidate
+        else:
+            # If no metadata is available, fallback to '[untitled]'
+            if not itma_id:
+                warnings.warn(
+                    "No itma_id available; using fallback title '[untitled]'.",
+                    UserWarning,
+                )
+
+        # Warn only for the "title missing" case, not for lookup failures.
+        if title == "[untitled]":
+            warnings.warn(
+                f"No title defined for score {itma_id!r}; "
+                "Setting title = '[untitled]'.",
+                UserWarning,
+            )
+
+        self.title = title
+        return title
+
+    def get_title(
+            self,
+            *,
+            custom_title: str | None = None,
+            collection_metadata: Any | None = None,
+            itma_id: str | None = None,
+            has_metadata: bool | None = None,
+    ) -> str:
+        """
+        Assign canonical title:
+        Use custom_title if provided, otherwise call Score._resolve_title()
+
+        Note re: metadata_present:
+            Optional. Indicates whether our input score has input metadata
+            or not.
+            This allows us improve/standardize warning messages for
+            "blank title" fallback cases in processing.py flow control module.
+        """
+        if has_metadata is None:
+            has_metadata = collection_metadata is not None
+
+        if custom_title is not None:
+            candidate = str(custom_title).strip()
+            self.title = candidate
+            return candidate
+
+        if has_metadata is False:
+            itma_id_clean = (itma_id or self.score_path.stem or "").strip()
+            warnings.warn(
+                f"No metadata is available for score {itma_id_clean!r}; "
+                "Setting title = '[untitled]'.",
+                UserWarning,
+            )
+            self.title = "[untitled]"
+            return self.title
+
+        return self._resolve_title(collection_metadata=collection_metadata,
+                              itma_id=itma_id)
+
+    def _add_title_to_music21_stream(self) -> None:
+        """
+        Ensure the music21 stream has a Metadata object at offset 0 (
+        per Music21 docs, this is where title info is written) and overwrite
+        any content at that location with title info from self.title attr.
+        This ensures our derivatives will display the canonical title.
+        """
+        if self.content is None or not self.title:
+            return
+
+        md = getattr(self.content, "metadata", None)
+
+        # If metadata is missing, create it and insert it at score metadata
+        # idx 0 per m21 docs
+        if md is None:
+            md = music21.metadata.Metadata()
+            self.content.insert(0, md)
+
+        # Ensure that stream metadata points at the Metadata object above
+        self.content.metadata = md
+
+        # overwrite any existing title
+        self.content.metadata.title = str(self.title)
 
     @_load_score_content
-    def _detect_key_signature_algorithmically(self):
+    def detect_key(self):
 
         """
-        Detects key via Music21-s built-in Krumhansl-Schmuckler algorithm,
-        using 'Simple Weights' by Craig Sapp (Humdrum Toollit).
+        Detects key via Music21-s built-in Krumhansl-Schmuckler algorithm.
         """
 
-        # TODO: write output to csv in 'detected_key' column
-
-        # Flatten the stream to ensure the algorithm can access all notes
-        notes = self.content.flatten().notes
-
-        if len(notes) == 0:
-            warnings.warn(
-                f"Score {self.score_path.name} contains no notes. "
-                "Key detection skipped.",
-                UserWarning
-            )
-            return None
+        detected_key = None
 
         try:
-            # Detect key using Krumhansl-Schmuckler algorithm with Craig Sapp's
-            # simple weights applied
-            key_analysis = SimpleWeights(notes)
-            detected_key = key_analysis.getSolution(notes)
+            detected_key = self.content.analyze("key")
+            if detected_key is not None:
+                self.key_signature = detected_key
+                return str(detected_key)
         except Exception as e:
-            warnings.warn(f"Algorithmic key detection failed: {e}",
-                          UserWarning)
-            return None
+            warnings.warn(
+                f"Music21 key analysis failed for {self.score_path.name}: {e}",
+                UserWarning,
+            )
 
-        # handle cases where no key was detected
-        if detected_key is None:
-            return None
+        self.key_signature = detected_key
 
-        # save key signature as instance attr
-        self.alt_key_signature = detected_key
-        # return human-readable version
-        return str(detected_key)
-
-    @_load_score_content
-    def _read_key_signature_from_score(self):
-        """Get any Key Signatures provided within the score"""
-
-        # TODO: write output to csv
-
-        content = self.content.recurse()
-        key_sigs = [ks for ks in content.getElementsByClass(key.KeySignature)]
-        # handle cases were no key signatures were given in the score
-        if not key_sigs:
-            warnings.warn("No key signature detected.", UserWarning)
-            return None
-        # Return only the first key signature object encoded in the score
-        extracted_key = key_sigs[0]
-
-        # If we have a Music21 KeySignature, convert to Key object
-        if not isinstance(extracted_key, key.Key):
-            implied_key = extracted_key.asKey()
-            if implied_key:
-                extracted_key = implied_key
-
-        # save key signature as instance attr
-        self.key_signature = extracted_key
-        # return human-readable version
-        return str(extracted_key)
-
-    @_load_score_content
-    def find_key_signature(self):
-
-        """
-        Compares key signature encoded in the score vs
-        algorithmically detected key signature. Makes note of cases where the
-        two values are not in agreement.
-        """
-
-        key_signature = self._read_key_signature_from_score()
-        detected_key = self._detect_key_signature_algorithmically()
-
-        if key_signature != detected_key:
-            self._keys_flag = False
-        else:
-            self._keys_flag = True
-
-        return self.key_signature
+        return None if detected_key is None else str(detected_key)
 
     @_load_score_content
     def extract_tonic_from_key_signature(self):
-
-        # TODO: write output to csv
-
         """
-        Extracts the tonic pitch name from the key signature returned by
-        the two methods above.
+        Extracts the tonic pitch name from the detected key signature.
         """
-
         # detect key if not already loaded
         if self.key_signature is None:
-            self.find_key_signature()
+            self.detect_key()
         # Check that key signature was successfully detected
         if self.key_signature is None:
-            raise ValueError(
+            warnings.warn(
                 f"Could not extract tonic for {self.score_path.name}: "
-                "No key signature detected or encoded."
+                "No key detected.",
+                UserWarning,
             )
+            return None
 
-        return self.key_signature.tonic.name
+        tonic = getattr(self.key_signature, "tonic", None)
+        if tonic is None:
+            warnings.warn(
+                f"Could not extract tonic for {self.score_path.name}: "
+                "Key was detected but tonic is undefined.",
+                UserWarning,
+            )
+            return None
+
+        return str(tonic.name)
 
     @_load_score_content
     def extract_mode_from_key_signature(self):
-        """Extracts the mode from the score's key signature property"""
-
-        # TODO: write output to csv
-
+        """
+        Extracts the mode from the detected key signature.
+        """
         # detect key if not already loaded
         if self.key_signature is None:
-            self.find_key_signature()
+            self.detect_key()
         # Check that key signature was successfully detected
         if self.key_signature is None:
-            raise ValueError(
+            warnings.warn(
                 f"Cannot extract mode for {self.score_path.name}: "
-                "No key signature information could be found or detected."
+                "No key signature detected or encoded.",
+                UserWarning,
             )
+            return None
 
-        return self.key_signature.mode
+        mode = getattr(self.key_signature, "mode", None)
+        if not mode:
+            warnings.warn(
+                f"Cannot extract mode for {self.score_path.name}: "
+                "Key was detected but mode is unavailable.",
+                UserWarning,
+            )
+            return None
+
+        return str(mode)
+
 
     @_load_score_content
     def extract_time_signature(self):
-        """Extracts the time signature from the score"""
+        """Extracts the time signature from the score."""
 
         all_time_signatures = self.content[meter.TimeSignature]
         # Make sure at least one time signature was found
@@ -317,7 +396,7 @@ class Score:
 
     @_load_score_content
     def extract_incipit(self):
-        """Extracts a 4-bar incipit from the score"""
+        """Extracts a 4-bar incipit from the score."""
 
         content = self.content
         #  check score is not empty
@@ -332,8 +411,8 @@ class Score:
 
         def _is_incomplete_bar(bar: music21.stream.Measure) -> bool:
             """
-            Helper to identify and skip any pick-ups improperly encoded as
-            first bar in the MusicXML-Music21 converion process.
+            Helper to identify and skip any pick-up bars encoded as
+            first bar in the MusicXML-Music21 conversion process.
             Returns True if bar is shorter than the duration indicated in the
              time signature.
             """
@@ -370,9 +449,6 @@ class Score:
         sequences representing rhythmically-emphasised notes in the incipit.
         """
 
-        # TODO: store output in ScoreMetadata  field
-        # TODO: format ouput per 'XXXX_XXXX'
-
         # read / extract incipit
         if self.incipit is None:
             self.extract_incipit()
@@ -383,7 +459,7 @@ class Score:
         incipit_chords = incipit.flatten().getElementsByClass('Chord')
         for c in incipit_chords:
             root_note = note.Note(c.root())
-            # set the duration of the  note to match the original chord
+            # set the duration of the note to match the original chord
             root_note.duration = c.duration
             # replace the original chord in the stream with the new note
             c.activeSite.replace(c, root_note)
@@ -405,27 +481,21 @@ class Score:
 
         # get key signature and scale
         if self.key_signature is None:
-            self.find_key_signature()
+            self.detect_key()
 
         key_sig = self.key_signature
-        if key_sig is None:
-            incipit_notes = incipit.flatten().notes
-            if incipit_notes:
-                key_analysis = SimpleWeights(incipit_notes)
-                key_sig = key_analysis.getSolution(incipit_notes)
 
         if key_sig is None:
             raise ValueError(
                 f"Cannot extract key signature for {self.score_path.name}"
             )
 
-        # Ensure we have a Key object (which has a .mode) rather than
+        # Ensure we have a Key object (which can store mode info) rather than
         # just a KeySignature
         if key_sig is not None and not isinstance(key_sig, key.Key):
             key_sig = key_sig.asKey()
 
-        # Check that we have a mode defined in the key signature
-        # (incl. maj/min tonality along with all 'church modes')
+        # Check that our Key has a mode defined in the key signature
         current_mode = getattr(key_sig, 'mode', None)
 
         if not current_mode:
@@ -448,14 +518,16 @@ class Score:
         for n in incipit.flatten().notes:
             # beatStrength >= 0.5 filters to retain only notes on accented
             # beats
-            if n.isNote and n.beatStrength >= 0.5:
+            if n.isNote and n.beatStrength > 0.5:
                 scale_degree = diatonic_scale.getScaleDegreeFromPitch(
                     n.pitch)
                 # in case Music21 returns None for accidentals on the beat
                 if scale_degree is not None:
-                    accented_notes.append(scale_degree)
+                    accented_notes.append(str(scale_degree))
 
-        return accented_notes
+        breathnach_code = "".join(accented_notes)
+
+        return breathnach_code
 
     @_load_score_content
     def count_number_of_parts(self):
@@ -468,8 +540,6 @@ class Score:
         This is not foolproof and a manual pass may be required after
         running this function.
         """
-
-        #  TODO: output to metadata
 
         score = self.content
 
@@ -487,8 +557,8 @@ class Score:
 
     @sync_to_s3
     @_load_score_content
-    def write_score_to_midi(self, out_path=None, stream=None):
-        """write music21 stream to MIDI file"""
+    def convert_score_to_midi(self, out_path=None, stream=None):
+        """Write music21 stream to MIDI file"""
 
         # Default to full score content if no stream is provided
         # This allows us to pass both incipit (stream) and full score to
@@ -503,18 +573,24 @@ class Score:
             out_path = Path(out_path)
 
         try:
-            # expand repeats (i.e.: ensure MIDI output reflects all
-            # repeat markers in the score) and write to disk
-            score = stream.expandRepeats()
-            score.write('midi', fp=str(out_path))
-            return out_path
-
+            return self._write_midi(out_path=out_path, stream=stream)
         except Exception as e:
-            # Raise error if write operation fails
             raise RuntimeError(
-                f"Failed to write MIDI for {self.score_path.name}. "
-                f"Error: {e}"
+                f"Failed to write MIDI for {self.score_path.name}. Error: {e}"
             ) from e
+
+    def _write_midi(self, *, out_path: str | Path, stream=None) -> Path:
+        """
+        Internal helper for writing MIDI files.
+        Never syncs to S3 (handled separately by @sync_to_s3).
+        """
+        if stream is None:
+            stream = self.content
+
+        out_path = Path(out_path)
+        score = stream.expandRepeats()
+        score.write("midi", fp=str(out_path))
+        return out_path
 
     @sync_to_s3
     def convert_score_to_abc(self, output_path=None):
@@ -522,6 +598,12 @@ class Score:
 
         #  Note: parsing multi-part XML scores to extract top line and write to
         #  ABC is beyond project scope as currently defined.
+
+        # Also note: Music21 has ABC-writing capability but the current
+        # implementation is very picky about score/stream formatting and is
+        # not compatible in practice with the types of MusicXML-derived
+        # scores we are working with. Accordingly, we use convert_xml2abc as
+        # a workaround. This also gives better performance than using Music21.
 
         if output_path is None:
             output_path = self._get_output_path('.abc')
@@ -555,7 +637,7 @@ class Score:
     @_load_score_content
     def convert_score_to_pdf(self, output_path=None):
         """
-        Converts the score to a PDF using LilyPond utilities.
+        Converts the score to a PDF using LilyPond CLI.
         Handles OS-specific command differences (Windows vs macOS/Linux).
         """
 
@@ -582,6 +664,7 @@ class Score:
             xml2ly_cmd = [
                 'musicxml2ly',
                 '--language=english',
+                '--no-stem-directions',
                 '-o',
                 str(ly_path),
                 str(self.score_path)
@@ -595,6 +678,16 @@ class Score:
                 shell=is_windows
                 # Windows needs shell=is_windows to find scripts in PATH
             )
+
+            # Strip labels + BPM from the generated .ly before compiling.
+            if ly_path.exists():
+                ly_text = ly_path.read_text(encoding="utf-8", errors="replace")
+                ly_text = self._sanitize_lilypond_source(
+                    ly_text,
+                    suppress_header=False,
+                    title=self.title
+                )
+                ly_path.write_text(ly_text, encoding="utf-8")
 
             # Compile LilyPond to PDF
             output_stem = str(output_path.with_suffix(''))
@@ -628,21 +721,6 @@ class Score:
                 f"PDF Conversion failed for {self.score_path.name}. "
                 f"Stderr: {e.stderr}"
             ) from e
-
-    @staticmethod
-    def _check_lilypond():
-        """
-        Checks if LilyPond is installed.
-        Returns True if found, False otherwise.
-        """
-        # Explicitly passing a string 'lilypond' for Windows compatibility
-        if shutil.which(str('lilypond')) is None:
-            warnings.warn(
-                "LilyPond not found on system. PDF conversion is unavailable.",
-                UserWarning
-            )
-            return False
-        return True
 
     @sync_to_s3
     @_load_score_content
@@ -682,6 +760,7 @@ class Score:
             xml2ly_cmd = [
                 'musicxml2ly',
                 '--language=english',
+                '--no-stem-directions',
                 '-o',
                 str(ly_path),
                 str(temp_xml)
@@ -693,6 +772,15 @@ class Score:
                 text=True,
                 shell=is_windows
             )
+
+            # Strip labels + BPM from the generated .ly before compiling SVG.
+            if ly_path.exists():
+                ly_text = ly_path.read_text(encoding="utf-8", errors="replace")
+                ly_text = self._sanitize_lilypond_source(
+                    ly_text,
+                    suppress_header=True
+                )
+                ly_path.write_text(ly_text, encoding="utf-8")
 
             # Compile .ly to cropped SVG using lilypond
             lily_cmd = [
@@ -720,6 +808,16 @@ class Score:
                     os.remove(output_path)
                 os.rename(cropped_svg, output_path)
 
+                # Add padding around the tightly-cropped SVG.
+                # Adjust margins to taste.
+                self._pad_svg_file(
+                    output_path,
+                    pad_top=1,
+                    pad_right=0,
+                    pad_bottom=0,
+                    pad_left=0,
+                )
+
             return output_path
 
         except subprocess.CalledProcessError as e:
@@ -737,6 +835,230 @@ class Score:
             standard_svg = output_path.with_suffix('.svg')
             if standard_svg.exists() and standard_svg != output_path:
                 os.remove(standard_svg)
+
+    @staticmethod
+    def _check_lilypond():
+        """
+        Checks if LilyPond is installed. Returns True if found,
+        False otherwise.
+        """
+        # Explicitly passing a string 'lilypond' for Windows compatibility
+        if shutil.which(str('lilypond')) is None:
+            warnings.warn(
+                "LilyPond not found on system. PDF conversion is unavailable.",
+                UserWarning
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _sanitize_lilypond_source(
+            ly_text: str, *,
+            suppress_header: bool = False,
+            title: str | None = None,
+    ) -> str:
+        """
+        Remove instrument/voice labels (e.g. "Violin") and tempo/BPM markings
+        from an temp LilyPond (.ly) file, which is created during the PDF
+        export process.
+
+        If suppress_header=True, remove header/title output (useful for
+        incipit SVGs where we want to keep musical content only).
+        """
+        # Remove explicit tempo markup and tempo settings
+        ly_text = re.sub(r"(?m)^\s*\\tempo\b.*$\n?", "", ly_text)
+        ly_text = re.sub(
+            r"(?m)^\s*\\set\s+Score\.tempoWholesPerMinute\s*=\s*.*$\n?",
+            "",
+            ly_text,
+        )
+
+        # Remove instrument name assignments
+        ly_text = re.sub(
+            r"(?m)^\s*\\set\s+(Staff|Voice)\.("
+            r"shortInstrumentName|instrumentName)\s*=\s*.*$\n?", "",
+            ly_text,
+        )
+
+        # Also handle: \new Staff \with { instrumentName = "Violin" ... }
+        # Only strip these specific properties, leaving other \with settings
+        # intact.
+        ly_text = re.sub(
+            r"(?s)(\\with\s*\{.*?)(\bshortInstrumentName\s*=\s*.*?)(.*?\})",
+            r"\1\3",
+            ly_text,
+        )
+        ly_text = re.sub(
+            r"(?s)(\\with\s*\{.*?)(\binstrumentName\s*=\s*.*?)(.*?\})",
+            r"\1\3",
+            ly_text,
+        )
+
+        # Always suppress these header fields
+        # (we do NOT want them in PDF or SVG).
+        ly_text = re.sub(
+            r'(?m)^\s*(subtitle|subsubtitle|piece)\s*=\s*".*"\s*$\n?',
+            "",
+            ly_text,
+        )
+
+        ly_text = ly_text.rstrip() + "\n\n"
+
+        if suppress_header:
+            # suppress *all* header output (title + composer + lyricist etc.)
+            # for svg output
+            ly_text += r"""
+    \header {
+      title = ##f
+      subtitle = ##f
+      subsubtitle = ##f
+      piece = ##f
+      composer = ##f
+      poet = ##f
+      arranger = ##f
+      opus = ##f
+      tagline = ##f
+    }
+    """.lstrip()
+        else:
+            # PDFs: keep header block, but:
+            # populate title from metadata, suppress subtitle, allow composer
+            # + poet (lyricist) to pass through unchanged
+            if title is None or not str(title).strip():
+                raise ValueError(
+                    "PDF export requires score title to be "
+                    "provided for display in LilyPond header."
+                )
+
+            safe_title = str(title).strip().replace(
+                "\\", "\\\\").replace('"','\\"'
+                                      )
+
+            # Ensure there is a header block
+            if not re.search(r"(?s)\\header\s*\{", ly_text):
+                ly_text += r"""
+    \header {
+    }
+    """.lstrip()
+
+            # Suppress tagline (either overwrite or insert)
+            if re.search(r"(?m)^\s*tagline\s*=", ly_text):
+                ly_text = re.sub(
+                    r"(?m)^\s*tagline\s*=.*$",
+                    "  tagline = ##f",
+                    ly_text,
+                )
+            else:
+                ly_text = re.sub(
+                    r"(?s)(\\header\s*\{)",
+                    r"\1\n  tagline = ##f",
+                    ly_text,
+                    count=1,
+                )
+
+            # Force title (overwrite or insert). Do not modify composer/poet.
+            if re.search(r"(?m)^\s*title\s*=", ly_text):
+                ly_text = re.sub(
+                    r'(?m)^\s*title\s*=.*$',
+                    f'  title = "{safe_title}"',
+                    ly_text,
+                )
+            else:
+                ly_text = re.sub(
+                    r"(?s)(\\header\s*\{)",
+                    rf'\1\n  title = "{safe_title}"',
+                    ly_text,
+                    count=1,
+                )
+
+        # Enforce predictable page + line behavior.
+        if not re.search(r"(?s)\\paper\s*\{", ly_text):
+            ly_text += r"""
+    \paper {
+      ragged-last = ##t
+      ragged-last-bottom = ##t
+      indent = 0\mm
+      short-indent = 0\mm
+      left-margin = 12\mm
+      right-margin = 12\mm
+    }
+    """.lstrip()
+
+        # Disable engravers responsible for printing these elements.
+        ly_text += r"""
+    \layout {
+      \context { \Staff \remove Instrument_name_engraver }
+      \context { \Score \remove Metronome_mark_engraver }
+    }
+    """.lstrip()
+
+        return ly_text
+
+    @staticmethod
+    def _pad_svg_file(
+            svg_path: Path,
+            *,
+            pad_top: float = 12.0,
+            pad_right: float = 12.0,
+            pad_bottom: float = 12.0,
+            pad_left: float = 12.0,
+    ) -> None:
+        """
+        Add whitespace padding around an SVG by expanding its viewBox.
+        Padding units are in SVG user units (the viewBox coordinate system).
+        """
+        svg_path = Path(svg_path)
+        if not svg_path.exists():
+            return
+
+        data = svg_path.read_text(encoding="utf-8", errors="replace")
+        try:
+            root = ET.fromstring(data)
+        except ET.ParseError:
+            return
+
+        view_box = root.get("viewBox")
+        if not view_box:
+            return
+
+        parts = view_box.replace(",", " ").split()
+        if len(parts) != 4:
+            return
+
+        try:
+            min_x, min_y, vb_w, vb_h = (
+                float(parts[0]),
+                float(parts[1]),
+                float(parts[2]),
+                float(parts[3]),
+            )
+        except ValueError:
+            return
+
+        new_min_x = min_x - pad_left
+        new_min_y = min_y - pad_top
+        new_vb_w = vb_w + pad_left + pad_right
+        new_vb_h = vb_h + pad_top + pad_bottom
+        root.set("viewBox",
+                 f"{new_min_x:g} {new_min_y:g} {new_vb_w:g} {new_vb_h:g}")
+
+        # If there's a clipPath with a rect sized to the old bounds,
+        # expand it so padding doesn't clip the drawing.
+        for clip in root.iter():
+            if not clip.tag.endswith("clipPath"):
+                continue
+            for el in list(clip):
+                if not el.tag.endswith("rect"):
+                    continue
+                el.set("x", f"{new_min_x:g}")
+                el.set("y", f"{new_min_y:g}")
+                el.set("width", f"{new_vb_w:g}")
+                el.set("height", f"{new_vb_h:g}")
+
+        svg_path.write_text(
+            ET.tostring(root, encoding="unicode", method="xml"),
+            encoding="utf-8",
+        )
 
     @sync_to_s3
     @_load_score_content
@@ -773,7 +1095,7 @@ class Score:
 
         try:
             # Export the incipit to MIDI
-            self.write_score_to_midi(out_path=temp_midi, stream=self.incipit)
+            self._write_midi(out_path=temp_midi, stream=self.incipit)
 
             # Render MIDI to WAV via FluidSynth
             fs_cmd = [
@@ -915,48 +1237,38 @@ class Score:
                 f"Failed to copy {self.score_path.name} to AWS: {e}"
             ) from e
 
-    def create_soundslice_slice_and_get_embed_url(
+    def create_soundslice_slice(
             self,
             *,
             collection_metadata,
             itma_id: str,
+            title: str | None = None,
             _folder_id: int | None = None,
     ) -> str:
         """
-        Creates a slice in the collection's Soundslice folder, adds MusicXML,
-        populates title from metadata (lookup by unique id / slug), and returns
-        the Soundslice embed URL string.
+        Create a slice in the collection's Soundslice folder, adds MusicXML,
+         and return the Soundslice embed URL string.
 
-        Internal optimization:
-            If _folder_id is provided, no list_folders() calls are made.
-            This is safe for parallel processing.
-
-        Note: artist is intentionally an empty string for now. This may
-        change if passthrough audio is confirmed as a requirement.
+        If _folder_id is provided, no list_folders() calls are made t the
+        Soundslice API (safe for parallel processing).
         """
 
-        # validate slug
-        slug = str(itma_id).strip()
-        if not slug:
-            raise ValueError("slug must be a non-empty string.")
-        # validate collection_metadata
-        if not hasattr(collection_metadata, "get_score_metadata"):
-            raise TypeError(
-                "collection_metadata arg must be CollectionMetadata object."
-            )
-        # load & read score metadata
-        score_metadata = collection_metadata.get_score_metadata(itma_id)
-        score_name = str(score_metadata.get("title") or "").strip()
-        if not score_name:
-            raise RuntimeError(f"Title field is missing/blank for {slug}.")
+        # validate score id
+        itma_id = str(itma_id).strip()
+        if not itma_id:
+            raise ValueError("ITMA id must be a non-empty string.")
+        # try to resolve score title
+        if not self.title:
+            self._resolve_title(collection_metadata=collection_metadata,
+                               itma_id=itma_id)
+
+        score_name = str(title or self.title or "").strip() or "[untitled]"
 
         if not self.collection_root:
-            raise RuntimeError("Collection root directory must be set to "
-                               "proceed.")
-        # set Soundslice folder name to mirror name of local collection root
-        # dir.
+            raise RuntimeError(
+                "Collection root directory must be set to proceed.")
+
         folder_name = self.collection_root.name
-        # load API credentials
         application_id, password = get_soundslice_credentials_from_env()
         client = Client(application_id, password)
 
@@ -980,7 +1292,7 @@ class Score:
                 try:
                     client.create_folder(name=folder_name)
                 except Exception as e:
-                    # Fail fast EXCEPT for the expected race case.
+                    # Fail fast EXCEPT for the expected parallel race case.
                     msg = str(e).lower()
                     race_ok = any(
                         needle in msg
@@ -1012,7 +1324,7 @@ class Score:
         try:
             new_slice = client.create_slice(
                 name=score_name,
-                artist='',
+                artist="",
                 has_shareable_url=True,
                 embed_status=Constants.EMBED_STATUS_ON_ALLOWLIST,
                 can_print=True,

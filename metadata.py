@@ -104,8 +104,9 @@ class CollectionMetadata:
       - CONSTANTS fields are populated with pre-defined static strings (as
       defined in metadata schema) on every apply/upsert operation.
     """
-
-    SLUG_COL = "slug"
+    
+    # store our metadata key as a class constant
+    KEY_COL = "slug"
 
     def __init__(self, metadata_path: str | os.PathLike[str] | None):
         """Initializes CollectionMetadata object with optional metadata path.
@@ -125,15 +126,17 @@ class CollectionMetadata:
         if self.metadata_path is None:
             raise ValueError(
                 "Metadata_path is None. To create a new in-memory "
-                "Dataframe without an input CSV, "
-                "use create_empty_metadata()."
+                "Dataframe without an input CSV, use create_empty_metadata()."
             )
 
         # try to read various possible Excel output encodings
         encodings_to_try = ("utf-8", "utf-8-sig", "cp1252", "latin-1")
         last_error: Exception | None = None
         df: pd.DataFrame | None = None
-
+        
+        # try to read CSV with multiple Windows-friewndly encodings in case 
+        # of formatting issues relating to Excel usage in external metadata 
+        # processing work 
         for enc in encodings_to_try:
             try:
                 df = pd.read_csv(self.metadata_path, encoding=enc)
@@ -155,7 +158,7 @@ class CollectionMetadata:
         df = self._validate_columns(df)
         df = self._normalize_types(df)
         # add any missing cols. from chema
-        df = self._ensure_schema_columns(df)
+        df = self._add_missing_columns(df)
         df = self._normalize_and_validate_slug_values(df)
 
         self.metadata = df
@@ -165,7 +168,7 @@ class CollectionMetadata:
         """Creates an empty Dataframe that we can populate row-wise."""
         cols = list(METADATA_FIELDS)
         df = pd.DataFrame(columns=cols).astype("string")
-        df = df.set_index(self.SLUG_COL, drop=False)
+        df = df.set_index(self.KEY_COL, drop=False)
         self.metadata = df
         return df
 
@@ -176,15 +179,22 @@ class CollectionMetadata:
         """
         itma_id = str(itma_id).strip()
         if not itma_id:
-            raise ValueError("Unique identifier not provided for this score.")
+            raise ValueError("Unique identifier not provided for score "
+                             f"{itma_id}.")
 
         if self.metadata is None:
             raise RuntimeError(
-                "Metadata not loaded. Call load_collection_metadata() or "
+                f"Metadata not loaded for score {itma_id}. Call "
+                "load_collection_metadata() or "
                 "create_empty_metadata() first."
             )
 
-        row = self.metadata.loc[itma_id]
+        try:
+            row = self.metadata.loc[itma_id]
+        except KeyError as e:
+            raise KeyError(
+                f"No metadata record found for score {itma_id!r}.") from e
+
         if isinstance(row, pd.DataFrame):
             raise ValueError(
                 f"Multiple metadata records found for unique "
@@ -195,17 +205,14 @@ class CollectionMetadata:
 
     def apply_row_updates(self, row_updates: dict[str, dict[str, Any]]) \
             -> None:
-        """
-                   Update existing rows in the collection-level
-                   metadata table.
-                   """
+        """ Update existing rows in the collection-level metadata table."""
         self._apply_row_updates_core(row_updates, allow_new_rows=False)
 
     def upsert_row_updates(self, row_updates: dict[str, dict[str, Any]]) \
             -> None:
         """
         Add new rows to collection-level metadata table for scores that do not
-        have unique ID slugs.
+        have unique ITMA id values in 'slug' col.
 
         This allows us to create metadata entries for MusicXML files
         that are not included in the input metadata file, or for cases in
@@ -249,7 +256,7 @@ class CollectionMetadata:
 
         # Ensure saved CSV matches ITMA's metadata schema (field names &
         # order)
-        df = self._ensure_schema_columns(self.metadata)
+        df = self._add_missing_columns(self.metadata)
         df = df[list(METADATA_FIELDS)]
 
         self._atomic_to_csv(df, out_path, index=index, encoding=encoding)
@@ -274,16 +281,9 @@ class CollectionMetadata:
         given_fields = set(map(str, df.columns))
         expected_fields = set(METADATA_FIELDS)
 
-        if "Slug" in given_fields and self.SLUG_COL not in given_fields:
+        if self.KEY_COL not in given_fields:
             raise ValueError(
-                "Metadata CSV column 'Slug' is invalid; "
-                "schema requires 'slug' (lowercase). "
-                "Did you mean 'slug' not 'Slug'?"
-            )
-
-        if self.SLUG_COL not in given_fields:
-            raise ValueError(
-                f"Metadata CSV is missing required column '{self.SLUG_COL}'."
+                f"Metadata CSV is missing required column '{self.KEY_COL}'."
             )
 
         extra_fields = sorted(given_fields - expected_fields)
@@ -294,19 +294,19 @@ class CollectionMetadata:
                 f"{extra_fields}"
             )
 
-        # Missing columns are allowed
-        # But they are populated via _ensure_schema_columns() (see below)
+        # Missing columns are allowed but they are populated via 
+        # _add_missing_columns() (see below) rather than by this method.
         return df
 
     @staticmethod
     def _normalize_types(df: pd.DataFrame) -> pd.DataFrame:
-        """Enforce string type for all columns in metadata table."""
+        """Enforce string type for all metadata table content."""
         return df.astype("string")
 
     @staticmethod
-    def _ensure_schema_columns(df: pd.DataFrame) -> pd.DataFrame:
+    def _add_missing_columns(df: pd.DataFrame) -> pd.DataFrame:
         """
-        Add any missing schema columns as empty (pd.NA) columns.
+        Add any missing schema metadata fields as empty (pd.NA) columns.
         """
         expected_cols = list(METADATA_FIELDS)
         for col in expected_cols:
@@ -317,10 +317,10 @@ class CollectionMetadata:
     def _normalize_and_validate_slug_values(
             self, df: pd.DataFrame
     ) -> pd.DataFrame:
-        """Normalize and validate unique id entries in slug column"""
+        """Normalize and validate ITMA id entries in 'slug' column"""
         # force str type
-        slug_series = df[self.SLUG_COL].astype("string").str.strip()
-        df[self.SLUG_COL] = slug_series
+        slug_series = df[self.KEY_COL].astype("string").str.strip()
+        df[self.KEY_COL] = slug_series
         # detect null entries
         invalid_mask = (
                 slug_series.isna() |
@@ -330,8 +330,8 @@ class CollectionMetadata:
         if bool(invalid_mask.any()):
             bad_rows = df.index[invalid_mask].tolist()[:10]
             raise ValueError(
-                "Metadata contains blank/invalid slug value(s). "
-                f"Sample row indices: {bad_rows}"
+                "Metadata 'slug' column contains blank/invalid ITMA id "
+                f"value(s). Sample row indices: {bad_rows}"
             )
         # detect duplicates
         dup_mask = slug_series.duplicated(keep=False)
@@ -340,13 +340,17 @@ class CollectionMetadata:
                 slug_series[dup_mask].value_counts().index.tolist()
             )[:10]
             raise ValueError(
-                "Metadata contains duplicated slug value(s). "
+                "Metadata 'slug' column contains duplicated ITMA id value(s). "
                 f"Sample duplicates: {dup_slugs}"
             )
         # return the dataframe less any invalid slug entries
-        return df.set_index(self.SLUG_COL, drop=False)
+        return df.set_index(self.KEY_COL, drop=False)
 
-    def _apply_row_updates_core(self, row_updates: dict[str, dict[str, Any]], *, allow_new_rows: bool) -> None:
+    def _apply_row_updates_core(self,
+                                row_updates: dict[str, dict[str, Any]],
+                                *,
+                                allow_new_rows: bool)\
+            -> None:
         """Apply row updates to collection-level metadata table"""
         if not row_updates:
             return
@@ -384,33 +388,25 @@ class CollectionMetadata:
                 + preview
                 + (" ..." if len(missing_ids) > 10 else "")
             )
-        # apply the row updates permissively ('upsert'). Creates blank rows
-        # for scores that don't already exist in the metadata table.
+        # apply the row updates ('upsert'). Creates blank rows
+        # for scores that don't already exist in the metadata table and
+        # updates them as metadata ouput values are created.
         if len(missing_ids) > 0 and allow_new_rows:
             blank = pd.DataFrame(
                 index=missing_ids,
                 columns=metadata_table.columns
             ).astype("string")
 
-            blank[self.SLUG_COL] = blank.index.astype("string")
+            blank[self.KEY_COL] = blank.index.astype("string")
             table = pd.concat([metadata_table, blank], axis=0).sort_index()
             self.metadata = table
+            metadata_table = table
         # populate the new blank row with metadata
         update_df = pd.DataFrame.from_dict(
             new_row_content,
             orient="index"
         ).astype("string")
 
-        # safely block edits to PRESERVED_FIELDS passthrough subset of
-        # metadata fields.
-        attempted_preserve = ((set(update_df.columns) &
-                              set(PRESERVE_FIELDS)) -
-                              {self.SLUG_COL})
-        if attempted_preserve:
-            raise ValueError(
-                "Row updates attempted to update preserved field(s): "
-                f"{sorted(attempted_preserve)}"
-            )
         # explicitly allow edits to OVERWRITE_FIELDS metadata fields only.
         overwrite_cols = \
             [c for c in update_df.columns if c in OVERWRITE_FIELDS]
@@ -424,7 +420,7 @@ class CollectionMetadata:
 
         # Ensure schema columns exist
         # (should already after load/create/save normalization)
-        metadata_table = self._ensure_schema_columns(metadata_table)
+        metadata_table = self._add_missing_columns(metadata_table)
         # update collection-level metadata table
         if overwrite_cols:
             metadata_table.update(update_df[overwrite_cols])

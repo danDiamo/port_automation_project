@@ -2,6 +2,8 @@
 This file holds unit tests for metadata.py.
 """
 
+# TODO: Inspect/review
+
 from __future__ import annotations
 from pathlib import Path
 
@@ -35,7 +37,8 @@ def test_create_score_metadata_row_update_happy_path():
 
 def test_load_collection_metadata_allows_missing_schema_fields(tmp_path: Path):
     """
-    Input CSV may be missing schema fields. They are added as empty columns on load.
+    Input CSV may be missing schema fields.
+    Test that they are successfully added as empty columns on load.
     """
     csv_path = tmp_path / "metadata.csv"
     csv_path.write_text(
@@ -62,29 +65,66 @@ def test_load_collection_metadata_allows_missing_schema_fields(tmp_path: Path):
     assert row["title"] == "Alpha Title"
 
 
-def test_load_collection_metadata_rejects_wrong_case_Slug(tmp_path: Path):
+def test_upsert_row_updates_creates_missing_row_and_populates_fields(tmp_path: Path):
     """
-    'Slug' is invalid; schema requires 'slug' lowercase.
+    Upsert should allow adding a new row for a score that is not already
+    present in the input CSV.
+    It should
+    (a) create the new row
+    (b) apply updates
+    (c) populate constants
     """
     csv_path = tmp_path / "metadata.csv"
     csv_path.write_text(
-        "Slug,title\n"
+        "slug,title\n"
         "alpha,Alpha Title\n",
         encoding="utf-8",
     )
 
     md = CollectionMetadata(str(csv_path))
-    with pytest.raises(ValueError) as e:
-        md.load_collection_metadata()
+    md.load_collection_metadata()
 
-    msg = str(e.value)
-    assert "Slug" in msg
-    assert "slug" in msg
+    new_slug = "beta"
+    url = "https://www.soundslice.com/slices/x/embed/"
+    md.upsert_row_updates({new_slug: {"soundslice_iframe": url}})
+
+    assert md.metadata is not None
+    assert new_slug in md.metadata.index
+    assert md.metadata.loc[new_slug, "slug"] == new_slug
+    assert md.metadata.loc[new_slug, "soundslice_iframe"] == url
+
+    # Constants should be populated for newly created rows too
+    assert md.metadata.loc[new_slug, "image_alt_text"] == "Musical Notation"
+    assert md.metadata.loc[new_slug, "collection_tag"] == "Port"
+    assert md.metadata.loc[new_slug, "score_track_rights"] == "In Copyright"
+    assert md.metadata.loc[new_slug, "score_track2_rights"] == "In Copyright"
+
+
+def test_apply_row_updates_rejects_missing_slug(tmp_path: Path):
+    """
+    Strict apply_row_updates should fail if the update includes an IRMA id
+    value that is not already present in the metadata table.
+    """
+    csv_path = tmp_path / "metadata.csv"
+    csv_path.write_text(
+        "slug,title\n"
+        "alpha,Alpha Title\n",
+        encoding="utf-8",
+    )
+
+    md = CollectionMetadata(str(csv_path))
+    md.load_collection_metadata()
+
+    with pytest.raises(ValueError) as e:
+        md.apply_row_updates({"beta": {"soundslice_iframe": "https://www.soundslice.com/slices/x/embed/"}})
+
+    assert "not present in metadata" in str(e.value)
 
 
 def test_apply_row_updates_and_enforce_constants_happy_path(tmp_path: Path):
     """
-    Happy path: apply_row_updates updates overwriteable fields and enforces constants.
+    Happy path: apply_row_updates updates overwriteable fields and populates
+    constants.
     """
     csv_path = tmp_path / "metadata.csv"
     csv_path.write_text(
@@ -102,7 +142,7 @@ def test_apply_row_updates_and_enforce_constants_happy_path(tmp_path: Path):
     assert md.metadata is not None
     assert md.metadata.loc["alpha", "soundslice_iframe"] == url
 
-    # Constants should be enforced
+    # Constants should be populated
     assert md.metadata.loc["alpha", "image_alt_text"] == "Musical Notation"
     assert md.metadata.loc["alpha", "collection_tag"] == "Port"
     assert md.metadata.loc["alpha", "score_track_rights"] == "In Copyright"
@@ -111,7 +151,7 @@ def test_apply_row_updates_and_enforce_constants_happy_path(tmp_path: Path):
 
 def test_collection_metadata_save_outputs_full_schema(tmp_path: Path):
     """
-    Save should write a CSV that matches the schema
+    Save should always write a CSV that matches the schema
     (all METADATA_FIELDS present).
     """
     csv_path = tmp_path / "metadata.csv"
