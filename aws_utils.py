@@ -10,6 +10,7 @@ to the AWS CLI.
 
 import boto3
 import os
+import mimetypes
 
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
@@ -111,15 +112,24 @@ def upload_file_to_s3(
         # Prevent keys that escape the intended root (e.g. ../..)
         if object_key == ".." or object_key.startswith("../"):
             raise ValueError(
-                f"Refusing to upload file outside root_dir. "
-                f"file_path={file_path!r} root_dir={root_dir!r}"
+                f"Cannot upload local file {file_path!r}: this file is "
+                f"located outside collection root directory. Please move file "
+                f"into collection root directory and re-run."
             )
     else:
         object_key = os.path.basename(file_path)
+        content_type, encoding = mimetypes.guess_type(file_path)
+        if content_type is None:
+            content_type = 'binary/octet-stream'
 
     try:
         with open(file_path, "rb") as f:
-            s3.Object(bucket_name, object_key).put(Body=f)
+            # auto-populate filetype tag required by AWS
+            f_type, encoding = mimetypes.guess_type(file_path)
+            if f_type is None:
+                f_type = 'binary/octet-stream'
+            # upload file
+            s3.Object(bucket_name, object_key).put(Body=f, ContentType=f_type)
         return object_key
     except ClientError:
         raise
@@ -145,10 +155,10 @@ def download_file_from_s3(bucket_name: str, object_key: str) -> bytes:
 def copy_mp3_to_aws(
         mp3_path: Optional[str],
         collection_root: str,
-        bucket_name: str = "scores.itma.ie"
+        bucket_name: str = "port.itma.ie"
 ) -> Optional[str]:
     """
-    Upload a single MP3 file to S3 (scores.itma.ie), mirroring the local
+    Upload a single MP3 file to S3 (port.itma.ie), mirroring the local
     directory structure relative to collection_root.
 
     This is a small convenience wrapper around upload_file_to_s3 that:

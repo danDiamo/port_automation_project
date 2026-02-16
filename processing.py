@@ -3,16 +3,17 @@
 """
 processing.py holds flow-control tools for collection and score processing.
 
-Design features:
 - Batch input file selection defaults to all MusicXML files in
   "<collection_root>_xml" folder under collection root dir.
 - Metadata CSV is optional. Its expected location is not hardcoded, for now;
   user must point to it manually.
-- Per-score output: {itma_id: {field: value}} patch dict. This is 'upserted' to
-  pandas metadata Dataframe (update + insert database operation), which can be
-  saved to file.
+- Per-score output: {itma_id: {field: value}} metadata patch dict is created
+and 'upserted' to pandas metadata Dataframe (update + insert database
+operation), which can be saved to CSV file.
 - Fail-fast on the first score error and record the score id. For now.
-- Windows/macOS parallelism via high-level module-scope worker.
+- Windows/macOS agnostic
+- Scores can be processed in parallel but this functionality is switched off by
+ default.
 """
 
 from __future__ import annotations
@@ -141,9 +142,28 @@ class CollectionContext:
         return self.collection_root / f"{self.collection_root.name}_xml"
 
     @property
-    def mp3_dir(self) -> Path:
-        """mp3 directory path"""
-        return self.collection_root / f"{self.collection_root.name}_mp3"
+    def incipit_mp3_dir(self) -> Path:
+        """Incipit mp3 directory path"""
+        return (
+                self.collection_root /
+                f"{self.collection_root.name}_incipit_mp3"
+        )
+
+    @property
+    def performance_mp3_dir(self) -> Path:
+        """Performance mp3 directory path"""
+        return (
+                self.collection_root /
+                f"{self.collection_root.name}_performance_mp3"
+        )
+
+    @property
+    def slow_mp3_dir(self) -> Path:
+        """Slow mp3 directory path"""
+        return (
+                self.collection_root /
+                f"{self.collection_root.name}_slow_mp3"
+        )
 
 
 class ScoreSelectionMode(str, Enum):
@@ -398,18 +418,39 @@ class ScoreProcessor:
     ) -> dict[str, Any]:
         out: dict[str, Any] = {}
 
+        # copy MusicXML file to S3 and record metadata
         out["musicxml"] = score.copy_musicxml_file_to_aws(
             collection_root=context.collection_root.parent
         )
-
-        mp3_path = context.mp3_dir / f"{itma_id}.mp3"
-        if mp3_path.exists():
-            mp3_uri = copy_mp3_to_aws(
-                str(mp3_path),
+        # copy incipit mp3s file to S3 and record metadata
+        incipit_mp3_path = context.incipit_mp3_dir / f"{itma_id}.mp3"
+        if incipit_mp3_path.exists():
+            incipit_mp3_uri = copy_mp3_to_aws(
+                str(incipit_mp3_path),
                 collection_root=str(context.collection_root.parent),
             )
-            if mp3_uri:
-                out["score_track_mp3"] = mp3_uri
+            if incipit_mp3_uri:
+                out["incipit_audio"] = incipit_mp3_uri
+
+        # copy performance mp3s file to S3 and record metadata
+        performance_mp3_path = context.performance_mp3_dir / f"{itma_id}.mp3"
+        if performance_mp3_path.exists():
+            performance_mp3_uri = copy_mp3_to_aws(
+                str(performance_mp3_path),
+                collection_root=str(context.collection_root.parent),
+            )
+            if performance_mp3_uri:
+                out["score_track_mp3"] = performance_mp3_uri
+
+        # copy slow mp3s file to S3 and record metadata
+        slow_mp3_path = context.slow_mp3_dir / f"{itma_id}.mp3"
+        if slow_mp3_path.exists():
+            slow_mp3_uri = copy_mp3_to_aws(
+                str(slow_mp3_path),
+                collection_root=str(context.collection_root.parent),
+            )
+            if slow_mp3_uri:
+                out["score_track2_mp3"] = slow_mp3_uri
 
         return out
 

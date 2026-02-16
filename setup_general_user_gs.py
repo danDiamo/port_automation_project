@@ -1,6 +1,6 @@
 """
-Helper script to automatically install GeneralUser-GS.sf2 to
-'assets' folder.
+Helper script to automatically install GeneralUser-GS.sf2 soundfont to
+'assets' folder (used in creation of incipit mp3 from MIDI).
 """
 
 import warnings

@@ -99,9 +99,12 @@ class Score:
     abc -- ABC notation representation of the score.
     """
 
+    # fallback time sig to avoid blank entries, implemented per ITMA's
+    # requirements
     DEFAULT_TIME_SIG = "4/4"
 
-    # shared cache to track Soundslice folder IDs for all Score class instances
+    # shared cache to track Soundslice folder IDs for all Score class
+    # instances
     _soundslice_folder_id_cache: dict[str, int] = {}
 
     def __init__(self, score_path, collection_root=None):
