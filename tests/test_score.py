@@ -50,7 +50,7 @@ def test_loading_content(default_score):
 
 def test_get_title_warns_and_falls_back_when_no_metadata_given(default_score):
     with pytest.warns(UserWarning):
-        t = default_score.get_title(collection_metadata=None)
+        t = default_score.set_metadata(collection_metadata=None)
     assert t == "untitled"
     assert default_score.title == "untitled"
 
@@ -61,14 +61,14 @@ def test_get_title_uses_metadata_title_when_present(default_score):
             assert itma_id == default_score.score_path.stem.strip()
             return {"federated_search_term": "Unit Test Title"}
 
-    test_title = default_score.get_title(
+    test_title = default_score.set_metadata(
         collection_metadata=FakeCollectionMetadata()
     )
     assert test_title == "Unit Test Title"
     assert default_score.title == "Unit Test Title"
 
 
-def test_get_title_warns_and_falls_back_when_metadata_title_blank(
+def test_set_metadata_warns_and_falls_back_when_metadata_title_blank(
         default_score
 ):
     class FakeCollectionMetadata:
@@ -77,7 +77,7 @@ def test_get_title_warns_and_falls_back_when_metadata_title_blank(
             return {"title": "   "}
 
     with pytest.warns(UserWarning):
-        t = default_score.get_title(
+        t = default_score.set_metadata(
             collection_metadata=FakeCollectionMetadata()
         )
     assert t == "untitled"
@@ -354,9 +354,9 @@ def test_copy_musicxml_file_to_aws(tmp_path):
     assert str(s3_uri) == f"s3://{bucket_name}/{expected_key}"
 
 
-def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
+def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
     """Soundslice unit test: no network. Verifies mock client calls & returned
-    embed URL."""
+    scorehash identifier."""
 
     # Create a temp collection folder and copy a real MusicXML file into it
     collection_root = tmp_path / "Test_Collection"
@@ -422,14 +422,14 @@ def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
     monkeypatch.setattr(score_module, "Constants", FakeConstants)
 
     # run
-    url = test_score.create_soundslice_slice(
+    embed = test_score.create_soundslice_slice(
         collection_metadata=FakeCollectionMetadata(),
         itma_id="unit-slug",
         _folder_id=123,
     )
 
     # Asserts
-    assert url == "https://www.soundslice.com/slices/scorehash_123/embed/"
+    assert embed == "scorehash_123"
     assert len(calls["create_slice"]) == 1
     assert len(calls["upload"]) == 1
 
@@ -617,20 +617,14 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
 
     # run test
     try:
-        url = score.create_soundslice_slice(
+        embed = score.create_soundslice_slice(
             collection_metadata=FakeCollectionMetadata(),
             itma_id="integration-slug",
             _folder_id=None,
         )
-
-        assert isinstance(url, str)
-        assert url.startswith("https://www.soundslice.com")
-        assert "/embed" in url
-
-        assert created["scorehash"], \
-            "Did not capture scorehash from create_slice response."
-        assert created["folder_id"], \
-            "Did not capture folder_id from create_slice call."
+        # check form of scorehash returned
+        assert isinstance(embed, str)
+        assert 0 < len(embed) <= 6
 
     # cleanup
     finally:

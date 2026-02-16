@@ -36,7 +36,12 @@ def test_collection_context_paths(tmp_path: Path) -> None:
     context = CollectionContext(collection_root=collection_root)
 
     assert context.xml_dir == collection_root / "Port_xml"
-    assert context.mp3_dir == collection_root / "Port_mp3"
+    assert context.incipit_mp3_dir == collection_root / "Port_incipit_mp3"
+    assert (
+            context.performance_mp3_dir == collection_root /
+            "Port_performance_mp3"
+    )
+    assert context.slow_mp3_dir == collection_root / "Port_slow_mp3"
 
 
 def test_score_selection(tmp_path: Path) -> None:
@@ -220,11 +225,11 @@ def test_score_processor_run_passthrough_aws_step_includes_optional_mp3(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     collection_root = tmp_path / "Port"
-    mp3_dir = collection_root / "Port_mp3"
-    mp3_dir.mkdir(parents=True)
+    incipit_mp3_dir = collection_root / "Port_incipit_mp3"
+    incipit_mp3_dir.mkdir(parents=True)
 
     itma_id = "alpha"
-    (mp3_dir / f"{itma_id}.mp3").write_bytes(b"fake-mp3-content")
+    (incipit_mp3_dir / f"{itma_id}.mp3").write_bytes(b"fake-mp3-content")
 
     def _fake_copy_mp3_to_aws(
         mp3_path: str | None,
@@ -250,7 +255,7 @@ def test_score_processor_run_passthrough_aws_step_includes_optional_mp3(
         context=context)
 
     assert out["musicxml"].startswith("s3://")
-    assert out["score_track_mp3"].startswith("s3://")
+    assert out["incipit_audio"].startswith("s3://")
 
 
 # =============================================================================

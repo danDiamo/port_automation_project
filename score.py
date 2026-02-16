@@ -24,7 +24,6 @@ import music21
 from dotenv import load_dotenv
 from abc_xml_converter import convert_xml2abc
 from music21 import bar, key, meter, note
-from music21.analysis.discrete import SimpleWeights
 from soundsliceapi import Client, Constants
 
 # local imports
@@ -129,7 +128,8 @@ class Score:
         self.key_signature = None
         self.abc = None
         self.title = None
-        pass
+        self.composer = None
+        self.tune_type = None
 
     def _validate_score_file(self):
         """
@@ -177,70 +177,48 @@ class Score:
         self.content = music21.converter.parse(self.score_path)
         self._add_title_to_music21_stream()
 
-    def _resolve_title(
+    @staticmethod
+    def _cleanup_metadata(raw_metadata: Any | None) -> str | None:
+        """
+        Clean metadata from external sources.
+        Returns a string, or None if blank/invalid.
+        """
+        if raw_metadata is None:
+            return None
+        cleaned_metadata = str(raw_metadata).strip()
+        if not cleaned_metadata or cleaned_metadata.lower() == "nan":
+            return None
+        return cleaned_metadata
+
+    def _get_score_metadata(
             self,
             *,
             collection_metadata: Any | None = None,
             itma_id: str | None = None,
-    ) -> str:
+    ) -> dict[str, Any] | None:
         """
-        Resolve title attr content from collection metadata:
-         - Lookup score title by ITMA id val stored in 'slug' metadata field.
-         - Populate attr with content from 'federated_search_term' field.
-         - Fall back to 'untitled' and warn the user if no title is given or
-        detected.
+        Get a metadata row as a dict (or return None if metadata is
+        unavailable).
+
+        Raises:
+            ValueError if lookup is attempted but itma_id is missing.
+            KeyError if lookup is attempted but no record exists.
         """
+        getter = getattr(collection_metadata, "get_score_metadata", None) \
+            if collection_metadata is not None else None
+        if not callable(getter):
+            return None
+
         itma_id = (itma_id or self.score_path.stem or "").strip()
-
-        getter = (
-            getattr(collection_metadata, "get_score_metadata", None)
-            if collection_metadata is not None
-            else None
-        )
-
-        title: str = "untitled"
-
-        # If we have metadata, try to look up title; throw error if we are
-        # unable to lookup via ITMA id/slug.
-        if callable(getter):
-            if not itma_id:
-                raise ValueError(
-                    f"Cannot load title for score {itma_id!r}: ITMA id slug is"
-                    " blank/empty."
-                )
-
-            try:
-                row = getter(itma_id)
-            except KeyError as e:
-                raise KeyError(
-                    f"Metadata lookup failed: no record found for score {
-                    itma_id!r}."
-                ) from e
-
-            if isinstance(row, dict):
-                candidate = str(row.get("federated_search_term") or "").strip()
-                if candidate:
-                    title = candidate
-        else:
-            # If no metadata is available, fallback to '[untitled]'
-            if not itma_id:
-                warnings.warn(
-                    "No itma_id available; using fallback title 'untitled'.",
-                    UserWarning,
-                )
-
-        # Warn only for the "title missing" case, not for lookup failures.
-        if title == "untitled":
-            warnings.warn(
-                f"No title defined for score {itma_id!r}; "
-                "Setting title = 'untitled'.",
-                UserWarning,
+        if not itma_id:
+            raise ValueError(
+                "Cannot load metadata for score: ITMA id slug is blank/empty."
             )
 
-        self.title = title
-        return title
+        row = getter(itma_id)
+        return dict(row) if isinstance(row, dict) else None
 
-    def get_title(
+    def set_metadata(
             self,
             *,
             custom_title: str | None = None,
@@ -250,9 +228,17 @@ class Score:
     ) -> str:
         """
         Assign canonical title:
-        Use custom_title if provided, otherwise call Score._resolve_title()
+        Use custom_title if provided, otherwise look up in metadata,
+        if available.
+        Also populates composer and tune_type attrs when metadata is
+        available.
 
-        Note re: metadata_present:
+        If custom_title is provided, metadata lookup is not performed and
+        composer/tune_type are not populated. This is based on our expected
+        use cases where custom titles are only used for occasional ad-hoc
+        processing of files without metadata.
+
+        Note re: has_metadata flag:
             Optional flag. Indicates whether our input score has input metadata
             or not. Allows us improve/standardize warning messages for
             "blank title" fallback cases in processing.py flow control module.
@@ -263,6 +249,9 @@ class Score:
         if custom_title is not None:
             candidate = str(custom_title).strip()
             self.title = candidate
+            # Custom-title mode: do not populate tune type or composer
+            self.composer = None
+            self.tune_type = None
             return candidate
 
         if has_metadata is False:
@@ -273,10 +262,62 @@ class Score:
                 UserWarning,
             )
             self.title = "untitled"
+            self.composer = None
+            self.tune_type = None
             return self.title
 
-        return self._resolve_title(collection_metadata=collection_metadata,
-                              itma_id=itma_id)
+        # Use a single metadata row lookup to populate title, composer &
+        # tune_type
+        score_metadata = self._get_score_metadata(
+            collection_metadata=collection_metadata,
+            itma_id=itma_id,
+        )
+
+        # if we don't have metadata
+        if score_metadata is None:
+            itma_id = (itma_id or self.score_path.stem or "").strip()
+            warnings.warn(
+                f"No metadata lookup is available for score {itma_id!r}; "
+                "Setting title = 'untitled'.",
+                UserWarning,
+            )
+            self.title = "untitled"
+            self.composer = None
+            self.tune_type = None
+            return self.title
+
+
+        # Populate self.title from federated_search_term
+        title = score_metadata.get("federated_search_term")
+        clean_title = self._cleanup_metadata(title)
+        if clean_title:
+            self.title = clean_title
+        else:
+            # Warn and fall back to 'untitled'
+            itma_id = (itma_id or self.score_path.stem or "").strip()
+            warnings.warn(
+                f"No title defined for score {itma_id!r}; "
+                "Setting title = 'untitled'.",
+                UserWarning,
+            )
+            self.title = "untitled"
+
+        # Set composer
+        composer = score_metadata.get("composer")
+        self.composer = self._cleanup_metadata(composer)
+
+        # Tune type: warn if missing in case there's an issue with input
+        # metadata
+        tune_type = score_metadata.get("tune_type")
+        self.tune_type = self._cleanup_metadata(tune_type)
+        if self.tune_type is None:
+            itma_id = (itma_id or self.score_path.stem or "").strip()
+            warnings.warn(
+                f"Missing tune_type metadata for score {itma_id!r}. ",
+                UserWarning
+            )
+
+            return self.title
 
     def _add_title_to_music21_stream(self) -> None:
         """
@@ -725,7 +766,9 @@ class Score:
                 ly_text = self._sanitize_lilypond_source(
                     ly_text,
                     suppress_header=False,
-                    title=self.title
+                    title=self.title,
+                    composer=self.composer,
+                    poet=self.tune_type
                 )
                 ly_path.write_text(ly_text, encoding="utf-8")
 
@@ -896,6 +939,8 @@ class Score:
             ly_text: str, *,
             suppress_header: bool = False,
             title: str | None = None,
+            composer: str | None = None,
+            poet: str | None = None
     ) -> str:
         """
         Remove instrument/voice labels (e.g. "Violin") and tempo/BPM markings
@@ -904,6 +949,11 @@ class Score:
 
         If suppress_header=True, remove header/title output (useful for
         incipit SVGs where we want to keep musical content only).
+
+        For PDF output (set suppress_header=False), populate the following:
+          - title (required, will fallback to 'untitled' if missing/blank)
+          - composer (set to ##f if missing/blank)
+          - poet (used for tune_type; set to ##f if missing/blank)
         """
         # Remove explicit tempo markup and tempo settings
         ly_text = re.sub(r"(?m)^\s*\\tempo\b.*$\n?", "", ly_text)
@@ -924,12 +974,12 @@ class Score:
         # Only strip these specific properties, leaving other \with settings
         # intact.
         ly_text = re.sub(
-            r"(?s)(\\with\s*\{.*?)(\bshortInstrumentName\s*=\s*.*?)(.*?\})",
+            r"(?s)(\\with\s*\{.*?)(\bshortInstrumentName\s*=\s*.*?)(.*?})",
             r"\1\3",
             ly_text,
         )
         ly_text = re.sub(
-            r"(?s)(\\with\s*\{.*?)(\binstrumentName\s*=\s*.*?)(.*?\})",
+            r"(?s)(\\with\s*\{.*?)(\binstrumentName\s*=\s*.*?)(.*?})",
             r"\1\3",
             ly_text,
         )
@@ -963,16 +1013,18 @@ class Score:
         else:
             # PDFs: keep header block, but:
             # populate title from metadata, suppress subtitle, allow composer
-            # + poet (lyricist) to pass through unchanged
+            # + poet (lyricist) to pass through
             if title is None or not str(title).strip():
                 raise ValueError(
                     "PDF export requires score title to be "
                     "provided for display in LilyPond header."
                 )
 
-            safe_title = str(title).strip().replace(
-                "\\", "\\\\").replace('"','\\"'
-                                      )
+            def _escape_ly(s: str) -> str:
+                """Escape special characters for LilyPond header fields."""
+                return str(s).strip().replace("\\", "\\\\").replace('"', '\\"')
+
+            safe_title = _escape_ly(title)
 
             # Ensure there is a header block
             if not re.search(r"(?s)\\header\s*\{", ly_text):
@@ -996,7 +1048,7 @@ class Score:
                     count=1,
                 )
 
-            # Force title (overwrite or insert). Do not modify composer/poet.
+            # Populate title (overwrite or insert)
             if re.search(r"(?m)^\s*title\s*=", ly_text):
                 ly_text = re.sub(
                     r'(?m)^\s*title\s*=.*$',
@@ -1010,6 +1062,50 @@ class Score:
                     ly_text,
                     count=1,
                 )
+
+            # Populate composer
+            composer_clean = str(
+                composer).strip() if composer is not None else ""
+            composer_line = (
+                f'  composer = "{_escape_ly(composer_clean)}"'
+                if composer_clean
+                else "  composer = ##f"
+            )
+            if re.search(r"(?m)^\s*composer\s*=", ly_text):
+                ly_text = re.sub(
+                    r"(?m)^\s*composer\s*=.*$",
+                    composer_line,
+                    ly_text,
+                )
+            else:
+                ly_text = re.sub(
+                    r"(?s)(\\header\s*\{)",
+                    rf"\1\n{composer_line}",
+                    ly_text,
+                    count=1,
+                )
+
+            # Populate tune_type (in 'poet' field)
+            tune_type_clean = str(poet).strip() if poet is not None else ""
+            poet_line = (
+                f'  poet = "{_escape_ly(tune_type_clean)}"'
+                if tune_type_clean
+                else "  poet = ##f"
+            )
+            if re.search(r"(?m)^\s*poet\s*=", ly_text):
+                ly_text = re.sub(
+                    r"(?m)^\s*poet\s*=.*$",
+                    poet_line,
+                    ly_text,
+                )
+            else:
+                ly_text = re.sub(
+                    r"(?s)(\\header\s*\{)",
+                    rf"\1\n{poet_line}",
+                    ly_text,
+                    count=1,
+                )
+
 
         # Enforce predictable page + line behavior.
         if not re.search(r"(?s)\\paper\s*\{", ly_text):
@@ -1289,7 +1385,7 @@ class Score:
         Create a slice in the collection's Soundslice folder, adds MusicXML,
          and return the Soundslice embed URL string.
 
-        If _folder_id is provided, no list_folders() calls are made t the
+        If _folder_id is provided, no list_folders() calls are made to the
         Soundslice API (safe for parallel processing).
         """
 
@@ -1299,10 +1395,16 @@ class Score:
             raise ValueError("ITMA id must be a non-empty string.")
         # try to resolve score title
         if not self.title:
-            self._resolve_title(collection_metadata=collection_metadata,
-                               itma_id=itma_id)
+            if collection_metadata is not None:
+                self.set_metadata(
+                    collection_metadata=collection_metadata,
+                    itma_id=itma_id
+                )
+            else:
+                # fall back if no metadata available
+                self.title = "untitled"
 
-        score_name = str(title or self.title or "").strip() or "[untitled]"
+        score_name = str(title or self.title or "").strip() or "untitled"
 
         if not self.collection_root:
             raise RuntimeError(
@@ -1376,12 +1478,12 @@ class Score:
             with self.score_path.open("rb") as fp:
                 client.upload_slice_notation(scorehash=scorehash, fp=fp)
 
-            # get embed url
-            embed_path = new_slice.get("embed_url")
-            if not embed_path:
-                raise RuntimeError("Soundslice API did not return embed_url.")
+            # get Soundslice 'scorehash' (embed id code)
+            embed_id = new_slice.get("scorehash")
+            if not embed_id:
+                raise RuntimeError("Soundslice API did not return scorehash.")
 
-            return f"https://www.soundslice.com{embed_path}"
+            return embed_id
 
         except Exception as e:
             raise RuntimeError(
