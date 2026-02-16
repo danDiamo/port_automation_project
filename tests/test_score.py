@@ -4,7 +4,6 @@
 import music21.key
 import os
 import pytest
-import re
 import secrets
 import shutil
 import subprocess
@@ -13,7 +12,7 @@ from moto import mock_aws
 from music21 import stream
 from pathlib import Path
 # local imports
-from aws_utils import create_s3_bucket, check_s3_file_exists
+from utils.aws_utils import create_s3_bucket, check_s3_file_exists
 from score import Score, sync_to_s3
 import score as score_module
 
@@ -52,15 +51,15 @@ def test_loading_content(default_score):
 def test_get_title_warns_and_falls_back_when_no_metadata_given(default_score):
     with pytest.warns(UserWarning):
         t = default_score.get_title(collection_metadata=None)
-    assert t == "[untitled]"
-    assert default_score.title == "[untitled]"
+    assert t == "untitled"
+    assert default_score.title == "untitled"
 
 
 def test_get_title_uses_metadata_title_when_present(default_score):
     class FakeCollectionMetadata:
         def get_score_metadata(self, itma_id: str) -> dict:
             assert itma_id == default_score.score_path.stem.strip()
-            return {"title": "Unit Test Title"}
+            return {"federated_search_term": "Unit Test Title"}
 
     test_title = default_score.get_title(
         collection_metadata=FakeCollectionMetadata()
@@ -81,8 +80,8 @@ def test_get_title_warns_and_falls_back_when_metadata_title_blank(
         t = default_score.get_title(
             collection_metadata=FakeCollectionMetadata()
         )
-    assert t == "[untitled]"
-    assert default_score.title == "[untitled]"
+    assert t == "untitled"
+    assert default_score.title == "untitled"
 
 
 def test_score_title_overwrites_music21_stream_title(default_score):
@@ -370,7 +369,7 @@ def test_create_soundslice_slice_and_get_embed_url_unit(tmp_path, monkeypatch):
     class FakeCollectionMetadata:
         def get_score_metadata(self, itma_id: str) -> dict:
             assert itma_id == "unit-slug"
-            return {"title": "Unit Test Title"}
+            return {"federated_search_term": "Unit Test Title"}
 
     class FakeConstants:
         # Mocks Soundslice constants

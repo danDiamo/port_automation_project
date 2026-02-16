@@ -4,7 +4,7 @@ Python library means we no longer need to connect to AWS via the CLI app.
 
 """
 
-from aws_utils import (
+from utils.aws_utils import (
     check_s3_file_exists,
     copy_mp3_to_aws,
     create_s3_bucket,
@@ -119,7 +119,7 @@ def test_download_file_from_s3_happy_path():
 @mock_aws
 def test_copy_mp3_to_aws_happy_path_with_root_dir_mirroring(tmp_path):
     """Verify MP3 upload mirrors local directory structure"""
-    create_s3_bucket("scores.itma.ie")
+    create_s3_bucket("port.itma.ie")
 
     collection_root = tmp_path / "MyCollection"
     mp3_dir = collection_root / "MyCollection_mp3"
@@ -131,8 +131,8 @@ def test_copy_mp3_to_aws_happy_path_with_root_dir_mirroring(tmp_path):
     uri = copy_mp3_to_aws(str(local_mp3), collection_root=str(collection_root))
 
     expected_key = "MyCollection_mp3/track.mp3"
-    assert uri == f"s3://scores.itma.ie/{expected_key}"
-    assert check_s3_file_exists("scores.itma.ie", expected_key) is True
+    assert uri == f"s3://port.itma.ie/{expected_key}"
+    assert check_s3_file_exists("port.itma.ie", expected_key) is True
 
 
 # --- Unhappy Path Tests ---
@@ -202,7 +202,7 @@ def test_upload_file_to_s3_fails_if_local_file_missing():
 @mock_aws
 def test_copy_mp3_to_aws_returns_none_if_no_file_provided(tmp_path):
     """If no MP3 is provided, the helper should return None (no-op)."""
-    create_s3_bucket("scores.itma.ie")
+    create_s3_bucket("port.itma.ie")
     result = copy_mp3_to_aws(None, collection_root=str(tmp_path))
     assert result is None
 
@@ -210,7 +210,7 @@ def test_copy_mp3_to_aws_returns_none_if_no_file_provided(tmp_path):
 @mock_aws
 def test_copy_mp3_to_aws_fails_if_not_mp3(tmp_path):
     """Verify the helper rejects non-mp3 file types."""
-    create_s3_bucket("scores.itma.ie")
+    create_s3_bucket("port.itma.ie")
 
     not_mp3 = tmp_path / "audio.wav"
     not_mp3.write_text("not really wav", encoding="utf-8")

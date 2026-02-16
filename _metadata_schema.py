@@ -76,7 +76,6 @@ PRESERVE_FIELDS = {
     "related_entries",
     "tune_type",
     "explore_tag",
-    "federated_search_term"
 }
 
 OVERWRITE_FIELDS = {
@@ -87,6 +86,7 @@ OVERWRITE_FIELDS = {
     "score_track2_rights",
     # editable but only under strictly-enforced conditions (only if empty)
     "title",
+    "federated_search_term",
     # pipeline-generated assets / embeds
     "featured_image",
     "pdf_download",

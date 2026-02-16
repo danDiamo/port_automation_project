@@ -28,8 +28,8 @@ from music21.analysis.discrete import SimpleWeights
 from soundsliceapi import Client, Constants
 
 # local imports
-from aws_utils import upload_file_to_s3
-from soundslice_utils import get_soundslice_credentials_from_env
+from utils.aws_utils import upload_file_to_s3
+from utils.soundslice_utils import get_soundslice_credentials_from_env
 
 # Load .env to access API credentials
 load_dotenv()
@@ -97,6 +97,7 @@ class Score:
     key_signature -- key signature encoded/detected in the score.
     metadata_path -- path to a csv file containing metadata for the score.
     abc -- ABC notation representation of the score.
+    title -- canonical title of the score.
     """
 
     # fallback time sig to avoid blank entries, implemented per ITMA's
@@ -183,9 +184,10 @@ class Score:
             itma_id: str | None = None,
     ) -> str:
         """
-        Resolve 'title' field content from collection metadata:
+        Resolve title attr content from collection metadata:
          - Lookup score title by ITMA id val stored in 'slug' metadata field.
-        - Fall back to '[untitled]' and warn the user if no title is given or
+         - Populate attr with content from 'federated_search_term' field.
+         - Fall back to 'untitled' and warn the user if no title is given or
         detected.
         """
         itma_id = (itma_id or self.score_path.stem or "").strip()
@@ -196,9 +198,10 @@ class Score:
             else None
         )
 
-        title: str = "[untitled]"
+        title: str = "untitled"
 
-        # If we have metadata, try to look up title, otherwise throw error.
+        # If we have metadata, try to look up title; throw error if we are
+        # unable to lookup via ITMA id/slug.
         if callable(getter):
             if not itma_id:
                 raise ValueError(
@@ -215,22 +218,22 @@ class Score:
                 ) from e
 
             if isinstance(row, dict):
-                candidate = str(row.get("title") or "").strip()
+                candidate = str(row.get("federated_search_term") or "").strip()
                 if candidate:
                     title = candidate
         else:
             # If no metadata is available, fallback to '[untitled]'
             if not itma_id:
                 warnings.warn(
-                    "No itma_id available; using fallback title '[untitled]'.",
+                    "No itma_id available; using fallback title 'untitled'.",
                     UserWarning,
                 )
 
         # Warn only for the "title missing" case, not for lookup failures.
-        if title == "[untitled]":
+        if title == "untitled":
             warnings.warn(
                 f"No title defined for score {itma_id!r}; "
-                "Setting title = '[untitled]'.",
+                "Setting title = 'untitled'.",
                 UserWarning,
             )
 
@@ -250,9 +253,8 @@ class Score:
         Use custom_title if provided, otherwise call Score._resolve_title()
 
         Note re: metadata_present:
-            Optional. Indicates whether our input score has input metadata
-            or not.
-            This allows us improve/standardize warning messages for
+            Optional flag. Indicates whether our input score has input metadata
+            or not. Allows us improve/standardize warning messages for
             "blank title" fallback cases in processing.py flow control module.
         """
         if has_metadata is None:
@@ -267,10 +269,10 @@ class Score:
             itma_id_clean = (itma_id or self.score_path.stem or "").strip()
             warnings.warn(
                 f"No metadata is available for score {itma_id_clean!r}; "
-                "Setting title = '[untitled]'.",
+                "Setting title = 'untitled'.",
                 UserWarning,
             )
-            self.title = "[untitled]"
+            self.title = "untitled"
             return self.title
 
         return self._resolve_title(collection_metadata=collection_metadata,
@@ -448,7 +450,7 @@ class Score:
     def create_breathnach_codes(self):
 
         """
-        Creates Breathnach code. These codes are diatonic scale degree
+        Creates Breathnach code. These codes are 8-value diatonic scale degree
         sequences representing rhythmically-emphasised notes in the incipit.
         """
 
@@ -458,8 +460,26 @@ class Score:
         # copy the incipit
         incipit = copy.deepcopy(self.incipit)
 
+        # Remove expressions and articulation
+        for n in incipit.recurse().notes:
+            n.articulations = []
+            n.expressions = []
+
+        # Remove grace notes
+        grace_notes = []
+        for n in incipit.recurse().notes:
+            if n.duration.isGrace:
+                grace_notes.append(n)
+
+        # Remove any detected grace notes from the score
+        for gn in grace_notes:
+            # Find the bar or voice containing the grace note & remove it
+            grace_note_location = gn.activeSite
+            if grace_note_location is not None:
+                grace_note_location.remove(gn)
+
         # handle chords:
-        incipit_chords = incipit.flatten().getElementsByClass('Chord')
+        incipit_chords = incipit.recurse().getElementsByClass('Chord')
         for c in incipit_chords:
             root_note = note.Note(c.root())
             # set the duration of the note to match the original chord
@@ -470,7 +490,7 @@ class Score:
         # handle rests by filling the most recent note, even if we have
         # multiple successive rests
         last_note = None
-        for el in incipit.flatten().notesAndRests:
+        for el in incipit.recurse().notesAndRests:
             if isinstance(el, note.Note):
                 # Store last detected note
                 last_note = el
@@ -511,10 +531,6 @@ class Score:
 
         diatonic_scale = key_sig.getScale(current_mode)
 
-        # Remove expressions and articulation
-        for n in incipit.recurse().notes:
-            n.expressions = []
-
         accented_notes = []
         # filter to retain accented notes only
         # Extract scale degrees for accented notes and store in list
@@ -522,13 +538,34 @@ class Score:
             # beatStrength >= 0.5 filters to retain only notes on accented
             # beats
             if n.isNote and n.beatStrength > 0.5:
-                scale_degree = diatonic_scale.getScaleDegreeFromPitch(
-                    n.pitch)
-                # in case Music21 returns None for accidentals on the beat
+                # get scale degree from pitch, even if it is an accidental
+                scale_degree, accent = (
+                    diatonic_scale.getScaleDegreeAndAccidentalFromPitch(
+                        n.pitch)
+                )
                 if scale_degree is not None:
+                    # retain scale degree info but not 'accidental modifier'
                     accented_notes.append(str(scale_degree))
 
-        breathnach_code = "".join(accented_notes)
+        if len(accented_notes) < 8:
+            warnings.warn(
+                f"Breathnach code could not be fully populated for"
+                f" {self.score_path.name}: insufficient accented notes "
+                f"detected. Please check score and/or output manually.",
+                UserWarning
+            )
+
+        if len(accented_notes) > 8:
+            warnings.warn(
+                f"Breathnach code for {self.score_path.name} exceeds maximum "
+                f"length (8 scale degree values). Output code has been "
+                f"automatically truncated. Please check score "
+                f"and/or output manually.",
+                UserWarning
+            )
+
+        # format output as a string & force max length of 8 scale degree values
+        breathnach_code = "".join(accented_notes[:8])
 
         return breathnach_code
 

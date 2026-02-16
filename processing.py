@@ -24,10 +24,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from aws_utils import copy_mp3_to_aws
+from utils.aws_utils import copy_mp3_to_aws
 from metadata import CollectionMetadata
 from score import Score
-from soundslice_utils import ensure_soundslice_folder_exists
+from utils.soundslice_utils import ensure_soundslice_folder_exists
 
 
 def _get_itma_id_from_path(score_path: Path) -> str:
