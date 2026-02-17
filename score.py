@@ -8,13 +8,11 @@ digital music score."""
 import copy
 import os
 import platform
-import re
 import shutil
 import sys
 import subprocess
 import tempfile
 import warnings
-import xml.etree.ElementTree as ET
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -28,6 +26,13 @@ from soundsliceapi import Client, Constants
 
 # local imports
 from utils.aws_utils import upload_file_to_s3
+from utils.pdf_utils import (
+    apply_pdf_footer_to_all_pages_in_score,
+    build_export_score_for_lilypond,
+    check_lilypond,
+    cleanup_lilypond_formatting,
+    pad_svg_file
+)
 from utils.soundslice_utils import get_soundslice_credentials_from_env
 
 # Load .env to access API credentials
@@ -57,7 +62,7 @@ def sync_to_s3(func):
         # If a user-defined local root directory is given, mirror in S3
         if (hasattr(self, 'collection_root') and self.collection_root and
                 filepath):
-            bucket_name = "scores.itma.ie"
+            bucket_name = "port.itma.ie"
             try:
                 s3_root = self.collection_root.parent
                 upload_file_to_s3(
@@ -177,19 +182,6 @@ class Score:
         self.content = music21.converter.parse(self.score_path)
         self._add_title_to_music21_stream()
 
-    @staticmethod
-    def _cleanup_metadata(raw_metadata: Any | None) -> str | None:
-        """
-        Clean metadata from external sources.
-        Returns a string, or None if blank/invalid.
-        """
-        if raw_metadata is None:
-            return None
-        cleaned_metadata = str(raw_metadata).strip()
-        if not cleaned_metadata or cleaned_metadata.lower() == "nan":
-            return None
-        return cleaned_metadata
-
     def _get_score_metadata(
             self,
             *,
@@ -242,6 +234,11 @@ class Score:
             Optional flag. Indicates whether our input score has input metadata
             or not. Allows us improve/standardize warning messages for
             "blank title" fallback cases in processing.py flow control module.
+
+        Note re: title info lookup:
+            - We prefer `federated_search_term` as the canonical title field.
+            - Fall back to 'title` if `federated_search_term` is
+            missing/blank.
         """
         if has_metadata is None:
             has_metadata = collection_metadata is not None
@@ -288,7 +285,10 @@ class Score:
 
 
         # Populate self.title from federated_search_term
-        title = score_metadata.get("federated_search_term")
+        title = (
+                score_metadata.get("federated_search_term") or
+                score_metadata.get("title")
+        )
         clean_title = self._cleanup_metadata(title)
         if clean_title:
             self.title = clean_title
@@ -317,14 +317,28 @@ class Score:
                 UserWarning
             )
 
-            return self.title
+        return self.title
+
+    @staticmethod
+    def _cleanup_metadata(raw_metadata: Any | None) -> str | None:
+        """
+        Clean metadata from external sources.
+        Returns a string, or None if blank/invalid.
+        """
+        if raw_metadata is None:
+            return None
+        cleaned_metadata = str(raw_metadata).strip()
+        if not cleaned_metadata or cleaned_metadata.lower() == "nan":
+            return None
+        return cleaned_metadata
 
     def _add_title_to_music21_stream(self) -> None:
         """
         Ensure the music21 stream has a Metadata object at offset 0 (
         per Music21 docs, this is where title info is written) and overwrite
         any content at that location with title info from self.title attr.
-        This ensures our derivatives will display the canonical title.
+        This ensures that any derivatives created via Music21 will display the
+        canonical title.
         """
         if self.content is None or not self.title:
             return
@@ -476,13 +490,59 @@ class Score:
 
             return actual_qL < expected_qL
 
+        # For cases where measures aren't correctly encoded in topline
+        all_bars = list(
+            topline.recurse().getElementsByClass(music21.stream.Measure))
+        if not all_bars:
+            raise ValueError(
+                "Cannot extract incipit: top part contains no measures.")
 
-        first_bar = topline.measure(1)
-        if _is_incomplete_bar(first_bar):
-            # Take the next 4 bars to ensure we have an accurate incipit.
-            incipit = topline.measures(2, 5)
-        else:
-            incipit = topline.measures(1, 4)
+        start_idx = 1 if _is_incomplete_bar(all_bars[0]) else 0
+        selected_bars = all_bars[start_idx:start_idx + 4]
+
+        # Capture original time signature to anchor beatStrength vals.
+        incipit_time_sig = (
+                selected_bars[0].timeSignature
+                or selected_bars[0].getContextByClass(meter.TimeSignature)
+        )
+        if incipit_time_sig is None:
+            score_ts = content.recurse().getElementsByClass(
+                meter.TimeSignature)
+            incipit_time_sig = score_ts[0] if score_ts else None
+        # set time sig to 4/4 in unlikely even of none being provided in the
+        # score
+        if incipit_time_sig is None:
+            incipit_time_sig = meter.TimeSignature(self.DEFAULT_TIME_SIG)
+
+        # Slice by offsets (quarterLength) and rebuild measures.
+        start_offset = float(selected_bars[0].offset)
+        end_offset = float(
+            selected_bars[-1].offset + selected_bars[-1].duration.quarterLength
+        )
+
+        # Build a new Part to ensure robust bar structure for incipit &
+        # derivatives
+        incipit = music21.stream.Part()
+        # copy in the time sig
+        incipit.insert(0.0, copy.deepcopy(incipit_time_sig))
+
+        # Copy incipit content into new part & recalculate offsets.
+        for el in topline.flatten().notesAndRests:
+            o = float(el.offset)
+            if start_offset <= o < end_offset:
+                incipit.insert(o - start_offset, copy.deepcopy(el))
+
+        # Re-make bars to avoid "skipped measure" issues in
+        # musicxml2ly.
+        incipit.makeMeasures(inPlace=True)
+
+        # Renumber bars (and mark as explicit)
+        for idx, bar in enumerate(
+                incipit.recurse().getElementsByClass(music21.stream.Measure),
+                start=1
+        ):
+            bar.number = idx
+            bar.implicit = False
 
         self.incipit = incipit
         return incipit
@@ -506,7 +566,7 @@ class Score:
             n.articulations = []
             n.expressions = []
 
-        # Remove grace notes
+        # Collect grace notes
         grace_notes = []
         for n in incipit.recurse().notes:
             if n.duration.isGrace:
@@ -555,7 +615,7 @@ class Score:
             )
 
         # Ensure we have a Key object (which can store mode info) rather than
-        # just a KeySignature
+        # just a KeySignature (sharps and flats only)
         if key_sig is not None and not isinstance(key_sig, key.Key):
             key_sig = key_sig.asKey()
 
@@ -575,18 +635,18 @@ class Score:
         accented_notes = []
         # filter to retain accented notes only
         # Extract scale degrees for accented notes and store in list
-        for n in incipit.flatten().notes:
-            # beatStrength >= 0.5 filters to retain only notes on accented
-            # beats
-            if n.isNote and n.beatStrength > 0.5:
-                # get scale degree from pitch, even if it is an accidental
-                scale_degree, accent = (
-                    diatonic_scale.getScaleDegreeAndAccidentalFromPitch(
-                        n.pitch)
-                )
-                if scale_degree is not None:
-                    # retain scale degree info but not 'accidental modifier'
-                    accented_notes.append(str(scale_degree))
+        # Compute beatStrength within bar context.
+        for bar in incipit.recurse().getElementsByClass(
+                music21.stream.Measure):
+            for n in bar.notes:
+                if (n.isNote and n.beatStrength is not None
+                        and n.beatStrength >= 0.5):
+                    scale_degree, _accent = (
+                        diatonic_scale.getScaleDegreeAndAccidentalFromPitch(
+                            n.pitch)
+                    )
+                    if scale_degree is not None:
+                        accented_notes.append(str(scale_degree))
 
         if len(accented_notes) < 8:
             warnings.warn(
@@ -616,7 +676,7 @@ class Score:
         """
         Applies a simple heuristic: double barlines & final barlines are
         taken as indicators of part structure; their occurrences in the
-        score are counted, giving the number of parts.
+        score are counted, outputting the number of parts.
 
         This is not foolproof and a manual pass may be required after
         running this function.
@@ -639,9 +699,9 @@ class Score:
     @sync_to_s3
     @_load_score_content
     def convert_score_to_midi(self, out_path=None, stream=None):
-        """Write music21 stream to MIDI file"""
+        """Write music21 stream to MIDI file """
 
-        # Default to full score content if no stream is provided
+        # Default to full score content if 'stream' is not provided
         # This allows us to pass both incipit (stream) and full score to
         # this method as needed.
         if stream is None:
@@ -653,6 +713,7 @@ class Score:
         else:
             out_path = Path(out_path)
 
+        # write output
         try:
             return self._write_midi(out_path=out_path, stream=stream)
         except Exception as e:
@@ -663,7 +724,6 @@ class Score:
     def _write_midi(self, *, out_path: str | Path, stream=None) -> Path:
         """
         Internal helper for writing MIDI files.
-        Never syncs to S3 (handled separately by @sync_to_s3).
         """
         if stream is None:
             stream = self.content
@@ -680,7 +740,7 @@ class Score:
         #  Note: parsing multi-part XML scores to extract top line and write to
         #  ABC is beyond project scope as currently defined.
 
-        # Also note: Music21 has ABC-writing capability but the current
+        # Also note: Music21 has ABC-writing capability, but the current
         # implementation is very picky about score/stream formatting and is
         # not compatible in practice with the types of MusicXML-derived
         # scores we are working with. Accordingly, we use convert_xml2abc as
@@ -707,8 +767,7 @@ class Score:
             return output_path
 
         except Exception as e:
-            # Chaining the exception to preserve the original error from
-            # convert_xml2abc
+            # preserve the original error from convert_xml2abc
             raise RuntimeError(
                 f"Failed to convert {self.score_path.name} to ABC notation. "
                 f"Internal Error: {e}"
@@ -719,10 +778,14 @@ class Score:
     def convert_score_to_pdf(self, output_path=None):
         """
         Converts the score to a PDF using LilyPond CLI.
-        Handles OS-specific command differences (Windows vs macOS/Linux).
+        Handles OS-specific commands (Windows & Mac-compatible).
+
+        Uses a normalized Music21 -> MusicXML export to reduce bar dropping
+        in musicxml2ly. Simple inputs proceed; complex inputs fail fast if any
+        structural remapping cannot be guaranteed.
         """
 
-        if not self._check_lilypond():
+        if not check_lilypond():
             raise RuntimeError(
                 "LilyPond not found. PDF conversion unavailable."
             )
@@ -737,20 +800,25 @@ class Score:
         ly_path = output_path.with_suffix('.ly')
         # make Windows-compatible before passing to CLI
         is_windows = platform.system() == "Windows"
+        # set tmp MusicXML file path
+        temp_xml = Path(tempfile.gettempdir()) / f"temp_fullscore_{os.getpid()}.xml"
 
         try:
-            # Convert MusicXML to .ly
-            # On Windows, musicxml2ly is often packaged as a script that needs
-            # the shell or full path
+            score_for_export = build_export_score_for_lilypond(
+                score_stream=self.content,
+                default_time_sig_str=self.DEFAULT_TIME_SIG,
+                score_label=self.score_path.name,
+            )
+            score_for_export.write("xml", fp=str(temp_xml))
+
             xml2ly_cmd = [
                 'musicxml2ly',
                 '--language=english',
                 '--no-stem-directions',
                 '-o',
                 str(ly_path),
-                str(self.score_path)
+                str(temp_xml),
             ]
-
             subprocess.run(
                 xml2ly_cmd,
                 check=True,
@@ -760,10 +828,10 @@ class Score:
                 # Windows needs shell=is_windows to find scripts in PATH
             )
 
-            # Strip labels + BPM from the generated .ly before compiling.
+            # Sanitize intermediate .ly before compiling PDF.
             if ly_path.exists():
                 ly_text = ly_path.read_text(encoding="utf-8", errors="replace")
-                ly_text = self._sanitize_lilypond_source(
+                ly_text = cleanup_lilypond_formatting(
                     ly_text,
                     suppress_header=False,
                     title=self.title,
@@ -781,13 +849,19 @@ class Score:
                 output_stem,
                 str(ly_path)
             ]
-
             subprocess.run(
                 lily_cmd,
                 check=True,
                 capture_output=True,
                 text=True,
                 shell=is_windows
+            )
+
+            # Apply footer
+            footer_pdf = Path(__file__).parent / "assets" / "itma_footer.pdf"
+            apply_pdf_footer_to_all_pages_in_score(
+                pdf_path=output_path,
+                footer_pdf_path=footer_pdf,
             )
 
             # Cleanup tmp dir
@@ -804,6 +878,9 @@ class Score:
                 f"PDF Conversion failed for {self.score_path.name}. "
                 f"Stderr: {e.stderr}"
             ) from e
+        finally:
+            if temp_xml.exists():
+                os.remove(temp_xml)
 
     @sync_to_s3
     @_load_score_content
@@ -813,7 +890,7 @@ class Score:
         and musicxml2ly utility. Optimized for bulk processing and OS-agnostic.
         """
 
-        if not self._check_lilypond():
+        if not check_lilypond():
             raise RuntimeError(
                 "LilyPond not found. SVG conversion is unavailable.")
 
@@ -837,7 +914,9 @@ class Score:
 
         try:
             # Export the incipit to XML
-            self.incipit.write('xml', fp=str(temp_xml))
+            tmp_score = music21.stream.Score()
+            tmp_score.insert(0.0, copy.deepcopy(self.incipit))
+            tmp_score.write('xml', fp=str(temp_xml))
 
             # Convert temporary XML to .ly using musicxml2ly
             xml2ly_cmd = [
@@ -856,10 +935,11 @@ class Score:
                 shell=is_windows
             )
 
-            # Strip labels + BPM from the generated .ly before compiling SVG.
+            # Use _sanitize_lilypond_source helper to format the intermediate
+            # .ly file before compiling PDF.
             if ly_path.exists():
                 ly_text = ly_path.read_text(encoding="utf-8", errors="replace")
-                ly_text = self._sanitize_lilypond_source(
+                ly_text = cleanup_lilypond_formatting(
                     ly_text,
                     suppress_header=True
                 )
@@ -883,7 +963,7 @@ class Score:
             )
 
             # Handle LilyPond's cropped naming convention, which
-            # auto-appends ".cropped.svg" to the output filename"
+            # auto-appends ".cropped.svg" to the output filename.
             cropped_svg = (
                     output_path.parent / f"{output_path.stem}.cropped.svg")
             if cropped_svg.exists():
@@ -892,8 +972,8 @@ class Score:
                 os.rename(cropped_svg, output_path)
 
                 # Add padding around the tightly-cropped SVG.
-                # Adjust margins to taste.
-                self._pad_svg_file(
+                # Adjust margins to taste using pad_svg_file helper params.
+                pad_svg_file(
                     output_path,
                     pad_top=1,
                     pad_right=0,
@@ -915,286 +995,9 @@ class Score:
                     os.remove(p)
 
             # Remove non-cropped SVG if LilyPond generated one
-            standard_svg = output_path.with_suffix('.svg')
-            if standard_svg.exists() and standard_svg != output_path:
-                os.remove(standard_svg)
-
-    @staticmethod
-    def _check_lilypond():
-        """
-        Checks if LilyPond is installed. Returns True if found,
-        False otherwise.
-        """
-        # Explicitly passing a string 'lilypond' for Windows compatibility
-        if shutil.which(str('lilypond')) is None:
-            warnings.warn(
-                "LilyPond not found on system. PDF conversion is unavailable.",
-                UserWarning
-            )
-            return False
-        return True
-
-    @staticmethod
-    def _sanitize_lilypond_source(
-            ly_text: str, *,
-            suppress_header: bool = False,
-            title: str | None = None,
-            composer: str | None = None,
-            poet: str | None = None
-    ) -> str:
-        """
-        Remove instrument/voice labels (e.g. "Violin") and tempo/BPM markings
-        from an temp LilyPond (.ly) file, which is created during the PDF
-        export process.
-
-        If suppress_header=True, remove header/title output (useful for
-        incipit SVGs where we want to keep musical content only).
-
-        For PDF output (set suppress_header=False), populate the following:
-          - title (required, will fallback to 'untitled' if missing/blank)
-          - composer (set to ##f if missing/blank)
-          - poet (used for tune_type; set to ##f if missing/blank)
-        """
-        # Remove explicit tempo markup and tempo settings
-        ly_text = re.sub(r"(?m)^\s*\\tempo\b.*$\n?", "", ly_text)
-        ly_text = re.sub(
-            r"(?m)^\s*\\set\s+Score\.tempoWholesPerMinute\s*=\s*.*$\n?",
-            "",
-            ly_text,
-        )
-
-        # Remove instrument name assignments
-        ly_text = re.sub(
-            r"(?m)^\s*\\set\s+(Staff|Voice)\.("
-            r"shortInstrumentName|instrumentName)\s*=\s*.*$\n?", "",
-            ly_text,
-        )
-
-        # Also handle: \new Staff \with { instrumentName = "Violin" ... }
-        # Only strip these specific properties, leaving other \with settings
-        # intact.
-        ly_text = re.sub(
-            r"(?s)(\\with\s*\{.*?)(\bshortInstrumentName\s*=\s*.*?)(.*?})",
-            r"\1\3",
-            ly_text,
-        )
-        ly_text = re.sub(
-            r"(?s)(\\with\s*\{.*?)(\binstrumentName\s*=\s*.*?)(.*?})",
-            r"\1\3",
-            ly_text,
-        )
-
-        # Always suppress these header fields
-        # (we do NOT want them in PDF or SVG).
-        ly_text = re.sub(
-            r'(?m)^\s*(subtitle|subsubtitle|piece)\s*=\s*".*"\s*$\n?',
-            "",
-            ly_text,
-        )
-
-        ly_text = ly_text.rstrip() + "\n\n"
-
-        if suppress_header:
-            # suppress *all* header output (title + composer + lyricist etc.)
-            # for svg output
-            ly_text += r"""
-    \header {
-      title = ##f
-      subtitle = ##f
-      subsubtitle = ##f
-      piece = ##f
-      composer = ##f
-      poet = ##f
-      arranger = ##f
-      opus = ##f
-      tagline = ##f
-    }
-    """.lstrip()
-        else:
-            # PDFs: keep header block, but:
-            # populate title from metadata, suppress subtitle, allow composer
-            # + poet (lyricist) to pass through
-            if title is None or not str(title).strip():
-                raise ValueError(
-                    "PDF export requires score title to be "
-                    "provided for display in LilyPond header."
-                )
-
-            def _escape_ly(s: str) -> str:
-                """Escape special characters for LilyPond header fields."""
-                return str(s).strip().replace("\\", "\\\\").replace('"', '\\"')
-
-            safe_title = _escape_ly(title)
-
-            # Ensure there is a header block
-            if not re.search(r"(?s)\\header\s*\{", ly_text):
-                ly_text += r"""
-    \header {
-    }
-    """.lstrip()
-
-            # Suppress tagline (either overwrite or insert)
-            if re.search(r"(?m)^\s*tagline\s*=", ly_text):
-                ly_text = re.sub(
-                    r"(?m)^\s*tagline\s*=.*$",
-                    "  tagline = ##f",
-                    ly_text,
-                )
-            else:
-                ly_text = re.sub(
-                    r"(?s)(\\header\s*\{)",
-                    r"\1\n  tagline = ##f",
-                    ly_text,
-                    count=1,
-                )
-
-            # Populate title (overwrite or insert)
-            if re.search(r"(?m)^\s*title\s*=", ly_text):
-                ly_text = re.sub(
-                    r'(?m)^\s*title\s*=.*$',
-                    f'  title = "{safe_title}"',
-                    ly_text,
-                )
-            else:
-                ly_text = re.sub(
-                    r"(?s)(\\header\s*\{)",
-                    rf'\1\n  title = "{safe_title}"',
-                    ly_text,
-                    count=1,
-                )
-
-            # Populate composer
-            composer_clean = str(
-                composer).strip() if composer is not None else ""
-            composer_line = (
-                f'  composer = "{_escape_ly(composer_clean)}"'
-                if composer_clean
-                else "  composer = ##f"
-            )
-            if re.search(r"(?m)^\s*composer\s*=", ly_text):
-                ly_text = re.sub(
-                    r"(?m)^\s*composer\s*=.*$",
-                    composer_line,
-                    ly_text,
-                )
-            else:
-                ly_text = re.sub(
-                    r"(?s)(\\header\s*\{)",
-                    rf"\1\n{composer_line}",
-                    ly_text,
-                    count=1,
-                )
-
-            # Populate tune_type (in 'poet' field)
-            tune_type_clean = str(poet).strip() if poet is not None else ""
-            poet_line = (
-                f'  poet = "{_escape_ly(tune_type_clean)}"'
-                if tune_type_clean
-                else "  poet = ##f"
-            )
-            if re.search(r"(?m)^\s*poet\s*=", ly_text):
-                ly_text = re.sub(
-                    r"(?m)^\s*poet\s*=.*$",
-                    poet_line,
-                    ly_text,
-                )
-            else:
-                ly_text = re.sub(
-                    r"(?s)(\\header\s*\{)",
-                    rf"\1\n{poet_line}",
-                    ly_text,
-                    count=1,
-                )
-
-
-        # Enforce predictable page + line behavior.
-        if not re.search(r"(?s)\\paper\s*\{", ly_text):
-            ly_text += r"""
-    \paper {
-      ragged-last = ##t
-      ragged-last-bottom = ##t
-      indent = 0\mm
-      short-indent = 0\mm
-      left-margin = 12\mm
-      right-margin = 12\mm
-    }
-    """.lstrip()
-
-        # Disable engravers responsible for printing these elements.
-        ly_text += r"""
-    \layout {
-      \context { \Staff \remove Instrument_name_engraver }
-      \context { \Score \remove Metronome_mark_engraver }
-    }
-    """.lstrip()
-
-        return ly_text
-
-    @staticmethod
-    def _pad_svg_file(
-            svg_path: Path,
-            *,
-            pad_top: float = 12.0,
-            pad_right: float = 12.0,
-            pad_bottom: float = 12.0,
-            pad_left: float = 12.0,
-    ) -> None:
-        """
-        Add whitespace padding around an SVG by expanding its viewBox.
-        Padding units are in SVG user units (the viewBox coordinate system).
-        """
-        svg_path = Path(svg_path)
-        if not svg_path.exists():
-            return
-
-        data = svg_path.read_text(encoding="utf-8", errors="replace")
-        try:
-            root = ET.fromstring(data)
-        except ET.ParseError:
-            return
-
-        view_box = root.get("viewBox")
-        if not view_box:
-            return
-
-        parts = view_box.replace(",", " ").split()
-        if len(parts) != 4:
-            return
-
-        try:
-            min_x, min_y, vb_w, vb_h = (
-                float(parts[0]),
-                float(parts[1]),
-                float(parts[2]),
-                float(parts[3]),
-            )
-        except ValueError:
-            return
-
-        new_min_x = min_x - pad_left
-        new_min_y = min_y - pad_top
-        new_vb_w = vb_w + pad_left + pad_right
-        new_vb_h = vb_h + pad_top + pad_bottom
-        root.set("viewBox",
-                 f"{new_min_x:g} {new_min_y:g} {new_vb_w:g} {new_vb_h:g}")
-
-        # If there's a clipPath with a rect sized to the old bounds,
-        # expand it so padding doesn't clip the drawing.
-        for clip in root.iter():
-            if not clip.tag.endswith("clipPath"):
-                continue
-            for el in list(clip):
-                if not el.tag.endswith("rect"):
-                    continue
-                el.set("x", f"{new_min_x:g}")
-                el.set("y", f"{new_min_y:g}")
-                el.set("width", f"{new_vb_w:g}")
-                el.set("height", f"{new_vb_h:g}")
-
-        svg_path.write_text(
-            ET.tostring(root, encoding="unicode", method="xml"),
-            encoding="utf-8",
-        )
+            full_svg = output_path.with_suffix('.svg')
+            if full_svg.exists() and full_svg != output_path:
+                os.remove(full_svg)
 
     @sync_to_s3
     @_load_score_content
@@ -1205,12 +1008,18 @@ class Score:
         """
 
         # make sure FluidSynth is installed
-        if not self._check_fluidsynth():
+        if shutil.which('fluidsynth') is None:
             raise RuntimeError(
                 "FluidSynth not found. MP3 conversion unavailable."
             )
+        # make sure ffmpeg is installed
+        if shutil.which(str('ffmpeg')) is None:
+            raise RuntimeError(
+                "FFmpeg not found. MP3 conversion unavailable."
+            )
+
         # make sure our SoundFont is available
-        soundfont_path = self._ensure_soundfont_exists()
+        soundfont_path = self._check_soundfont()
 
         # set up input and paths
         if self.incipit is None:
@@ -1281,38 +1090,10 @@ class Score:
                 if p.exists():
                     os.remove(p)
 
-    @staticmethod
-    def _check_fluidsynth():
-        """
-        Checks if FluidSynth is installed.
-        Returns True if found, False otherwise.
-        """
-        if shutil.which('fluidsynth') is None:
-            warnings.warn(
-                "FluidSynth not found on system. "
-                "MP3 conversion is unavailable.",
-                UserWarning
-            )
-            return False
-        return True
 
-    @staticmethod
-    def _check_ffmpeg():
+    def _check_soundfont(self):
         """
-        Checks if FFmpeg is installed.
-        Returns True if found, False otherwise.
-        """
-        if shutil.which(str('ffmpeg')) is None:
-            warnings.warn(
-                "FFmpeg not found on system. MP3 conversion is unavailable.",
-                UserWarning
-            )
-            return False
-        return True
-
-    def _ensure_soundfont_exists(self):
-        """
-        Ensures the GeneralUser-GS.sf2 SoundFont is available in the assets
+        Ensures the GeneralUser-GS.sf2 SoundFont is available in the './assets'
         dir. If not, runs the setup script to download it.
         """
 
@@ -1344,7 +1125,7 @@ class Score:
 
     def copy_musicxml_file_to_aws(self, collection_root: Path) -> str:
         """
-        Uploads the MusicXML score to the 'scores.itma.ie' S3 bucket,
+        Uploads the MusicXML score to the 'port.itma.ie' S3 bucket,
         preserving the local directory structure relative to the collection
         root dir.
 
@@ -1352,7 +1133,7 @@ class Score:
             S3 URI to the uploaded object (e.g. s3://bucket/prefix/file.xml)
         """
         # Hardcoded bucket as per ITMA requirements
-        bucket_name = "scores.itma.ie"
+        bucket_name = "port.itma.ie"
 
         try:
             # Mirror local directory structure relative to collection_root

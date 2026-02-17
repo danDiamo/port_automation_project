@@ -1,4 +1,8 @@
-"""soundslice_utils.py holds helper functions for Soundslice integration."""
+"""
+soundslice_utils.py holds helper functions for Soundslice integration.
+Note: This module is not currently unit tested but is used by tests in
+test_score.py.
+"""
 
 from __future__ import annotations
 
@@ -27,14 +31,14 @@ def get_soundslice_credentials_from_env() -> tuple[str, str]:
     return app_id, pwd
 
 
-def ensure_soundslice_folder_exists(folder_name: str) -> int:
+def check_soundslice_folder_exists(folder_name: str) -> int:
     """
-    Ensure a Soundslice folder exists and return its id.
+    Check that a Soundslice folder exists and return its id.
 
     Fail-fast:
-      - Raises immediately on real API/credential/permission errors.
-      - Tolerates the expected parallel processing race case where another
-        process created the folder first (then re-lists to obtain id).
+      - Raises error on API/credential/permission errors.
+      - Tolerates parallel processing race case where another
+        process created the folder first, then re-lists to obtain folder id.
     """
     folder_name = str(folder_name).strip()
     if not folder_name:

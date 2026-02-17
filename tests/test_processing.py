@@ -1,10 +1,7 @@
-"""
-Happy-path unit + integration-ish tests for processing.py.
+# TODO: Docstrings
 
-Design goals:
-- Fast, deterministic, offline (no real AWS/Soundslice/network)
-- Human-friendly assertions
-- Cover serial mode + a parallel-branch smoke test without spawning processes
+"""
+Happy-path unit & integration(ish) tests for processing.py.
 """
 
 from __future__ import annotations
@@ -165,8 +162,6 @@ class _FakeScore:
     def create_soundslice_slice(
         self,
         *,
-        itma_id: str,
-        title: str | None = None,
         _folder_id: int | None,
     ) -> str:
         return "https://www.soundslice.com/slices/fake/embed/"
@@ -233,10 +228,13 @@ def test_score_processor_run_passthrough_aws_step_includes_optional_mp3(
 
     def _fake_copy_mp3_to_aws(
         mp3_path: str | None,
+        *,
         collection_root: str,
-        bucket_name: str = "scores.itma.ie",
+        bucket_name: str = "port.itma.ie",
     ) -> str | None:
         assert mp3_path is not None
+        assert isinstance(collection_root, str)
+        assert bucket_name  # not empty
         return "s3://BUCKET_PLACEHOLDER/key.mp3"
 
     monkeypatch.setattr(

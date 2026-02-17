@@ -1,5 +1,3 @@
-# TODO: add comments / inspect new content
-
 """
 processing.py holds flow-control tools for collection and score processing.
 
@@ -27,7 +25,7 @@ from typing import Any
 from utils.aws_utils import copy_mp3_to_aws
 from metadata import CollectionMetadata
 from score import Score
-from utils.soundslice_utils import ensure_soundslice_folder_exists
+from utils.soundslice_utils import check_soundslice_folder_exists
 
 
 def _get_itma_id_from_path(score_path: Path) -> str:
@@ -56,24 +54,45 @@ def _get_itma_id_from_path(score_path: Path) -> str:
 
 
 @dataclass(frozen=True)
-class _TitleLookupMetadata:
+class _MetadataLookup:
     """
-    Picklable metadata lookup via a {itma_id -> title} dict.
+    Picklable metadata lookup via a dict keyed by itma_id/slug.
 
     Calls the `get_score_metadata(itma_id) API used by
-    Score.get_title(). This lets us keep serial and parallel
+    Score.set_metadata(). This lets us keep serial and parallel
     behavior consistent, while avoiding passing a pandas-based
     CollectionMetadata object to subprocesses.
+    
+     Returns:
+    - A dict holding a single "row" of metadata.
+    - Includes both `federated_search_term` and `title` so Score.set_metadata()
+      can choose the best available title.
     """
-    title_lookup: dict[str, str]
+    metadata_lookup: dict[str, dict[str, str]]
 
     def get_score_metadata(self, itma_id: str) -> dict[str, Any]:
-        slug = str(itma_id or "").strip()
-        if not slug:
+        itma_id = str(itma_id or "").strip()
+        if not itma_id:
             raise ValueError("itma_id slug is blank/empty.")
-        if slug not in self.title_lookup:
-            raise KeyError(slug)
-        return {"title": self.title_lookup.get(slug, "")}
+        if itma_id not in self.metadata_lookup:
+            raise KeyError(itma_id)
+
+        metadata_row = dict(self.metadata_lookup[itma_id])
+
+        # Guard against string literals of pd.NA or nan appearing in lookup
+        # if empty tune_type or composer fields are loaded
+        for key, val in list(metadata_row.items()):
+            if val is None:
+                metadata_row[key] = ""
+                continue
+            content = str(val).strip()
+            c_lower = content.lower()
+            metadata_row[key] = "" if (
+                    content == "<NA>" or
+                    c_lower == "nan"
+            ) else content
+
+        return metadata_row
 
 
 def _single_score_score_worker(
@@ -84,7 +103,7 @@ def _single_score_score_worker(
     analysis_methods: list[str] | None,
     derivative_methods: list[str] | None,
     soundslice_folder_id: int | None,
-    title_lookup: dict[str, str] | None,
+    score_metadata: dict[str, dict[str, str]] | None,
     has_metadata: bool,
 ) -> dict[str, dict[str, Any]]:
     """
@@ -109,9 +128,9 @@ def _single_score_score_worker(
         allow_new_rows=True,
     )
 
-    metadata_for_title = (
-        _TitleLookupMetadata(title_lookup)
-        if (has_metadata and title_lookup is not None)
+    metadata_lookup = (
+        _MetadataLookup(score_metadata)
+        if (has_metadata and score_metadata is not None)
         else None
     )
 
@@ -121,7 +140,7 @@ def _single_score_score_worker(
         itma_id=itma_id,
         context=context,
         processing_steps=processing_steps,
-        collection_metadata=metadata_for_title,
+        collection_metadata=metadata_lookup,
         soundslice_folder_id=soundslice_folder_id,
         custom_title=None,
         has_metadata=has_metadata,
@@ -243,7 +262,7 @@ class ScoreProcessor:
         """Process score and return metadata patch."""
         score = Score(score_path, collection_root=context.collection_root)
 
-        score.title = score.get_title(
+        score.title = score.set_metadata(
             custom_title=custom_title,
             collection_metadata=collection_metadata,
             itma_id=itma_id,
@@ -470,50 +489,81 @@ class CollectionProcessor:
         metadata_csv_path: str | Path | None = None,
         save: bool = True,
     ) -> str | None:
-        """Run collection processing, metadata updates, and create outputs."""
+        """
+        Run collection processing, metadata updates, and create outputs.
+        """
         context = CollectionContext(collection_root=Path(collection_root))
         score_paths = self._resolve_score_paths(
-            context=context,
-            selection=selection
+            context=context, selection=selection
         )
 
         # If user doesn't supply an input metadata CSV, we still may want to
-        # build metadata iteratively via multiple one-off runs:
+        # build metadata table on a score-by-score basis:
         # if a "_processed" metadata output file exists, load it and upsert
         # into it; otherwise start from an empty metadata table
-        default_processed_out_path = (
-                context.collection_root
-                / f"{context.collection_root.name}_metadata_processed.csv"
+        csv_out_path = (
+            context.collection_root
+            / f"{context.collection_root.name}_metadata_processed.csv"
         )
 
-        if metadata_csv_path is not None:
-            collection_metadata = CollectionMetadata(str(metadata_csv_path))
+        # set up metadata in and out paths
+        raw_path: Path | None = Path(
+            metadata_csv_path) if metadata_csv_path else None
+        processed_path: Path | None = (
+            raw_path.with_name(f"{raw_path.stem}_processed{raw_path.suffix}")
+            if raw_path is not None
+            else None
+        )
+
+        # Loads collection metadata if a CSV file is provided; load
+        # work-in-progress 'processed' metadata file to allow repeated
+        # one-off score processing runs;
+        # otherwise builds a metadata table row-wise from scratch if neither
+        # raw or processed metadata files are available.
+        if raw_path is not None:
+            in_path = processed_path if (
+                    processed_path and processed_path.exists()
+            ) else raw_path
+            collection_metadata = CollectionMetadata(str(in_path))
             collection_metadata.load_collection_metadata()
         else:
-            if default_processed_out_path.exists():
-                collection_metadata = CollectionMetadata(
-                    str(default_processed_out_path)
-                )
+            if csv_out_path.exists():
+                collection_metadata = CollectionMetadata(str(
+                    csv_out_path))
                 collection_metadata.load_collection_metadata()
             else:
                 collection_metadata = CollectionMetadata(None)
                 collection_metadata.create_empty_metadata_table()
 
-        title_lookup: dict[str, str] | None = None
+        # Build a lookup of just the metadata fields Score needs.
+        metadata_lookup: dict[str, dict[str, str]] | None = None
         if (
-                metadata_csv_path is not None and
+                metadata_csv_path is not None and 
                 collection_metadata.metadata is not None
         ):
-            title_lookup = {
-                str(row.get("slug") or "").strip():
-                    str(row.get("title") or "").strip()
-                for _, row in collection_metadata.metadata.iterrows()
-            }
+            metadata_lookup = {}
 
+            for _, row in collection_metadata.metadata.iterrows():
+                itma_id = str(row.get("slug") or "").strip()
+                if not itma_id:
+                    continue
+
+                # Populate metadata lookup and convert any pandas None vals to
+                # empty strings
+                metadata_lookup[itma_id] = {
+                    "federated_search_term": str(
+                        row.get("federated_search_term")).strip(),
+                    "title": str(row.get("title")).strip(),
+                    "tune_type": str(row.get("tune_type")).strip(),
+                    "composer": str(row.get("composer")).strip(),
+                }
+
+            # If we have an input metadata CSV, treat it as source of truth:
+            # every score file we process must have a metadata row.
             missing = [
                 p.stem.strip()
                 for p in score_paths
-                if p.stem.strip() not in title_lookup
+                if p.stem.strip() not in metadata_lookup
             ]
             if missing:
                 preview = ", ".join(missing[:10])
@@ -524,44 +574,44 @@ class CollectionProcessor:
 
         soundslice_folder_id: int | None = None
         if processing_steps.mode in {
-            ProcessingMode.SOUNDSLICE,
+            ProcessingMode.SOUNDSLICE, 
             ProcessingMode.ALL
         }:
-            soundslice_folder_id = ensure_soundslice_folder_exists(
-                context.collection_root.name
-            )
+            soundslice_folder_id = check_soundslice_folder_exists(
+                context.collection_root.name)
 
-        patches: dict[str, dict[str, Any]] = {}
+        metadata_patches: dict[str, dict[str, Any]] = {}
         has_metadata = metadata_csv_path is not None
 
-        # Processes scores sequentially or in parallel per 'processing_steps'
+        # Processes scores sequentially or in parallel per 'processing_steps' 
         # settings
         if not processing_steps.parallel:
-            metadata_for_title = (
-                _TitleLookupMetadata(title_lookup)
-                if (has_metadata and title_lookup is not None)
+            metadata_lookup = (
+                _MetadataLookup(metadata_lookup)
+                if (has_metadata and metadata_lookup is not None)
                 else None
             )
 
-            for score_path in score_paths:
-                itma_id = _get_itma_id_from_path(score_path)
+            for path in score_paths:
+                itma_id = _get_itma_id_from_path(path)
 
                 patch = self.score_processor.process_single_score(
-                    score_path=score_path,
+                    score_path=path,
                     itma_id=itma_id,
                     context=context,
                     processing_steps=processing_steps,
-                    collection_metadata=metadata_for_title,
+                    collection_metadata=metadata_lookup,
                     soundslice_folder_id=soundslice_folder_id,
                     custom_title=None,
                     has_metadata=has_metadata,
                 )
-                for s, values in patch.items():
-                    patches.setdefault(s, {}).update(values)
+                for score, values in patch.items():
+                    metadata_patches.setdefault(score, {}).update(values)
 
         else:
-            with (ProcessPoolExecutor(max_workers=processing_steps.max_workers)
-                  as ex):
+            with ProcessPoolExecutor(
+                    max_workers=processing_steps.max_workers
+            ) as ex:
                 futures = [
                     ex.submit(
                         _single_score_score_worker,
@@ -571,7 +621,7 @@ class CollectionProcessor:
                         analysis_methods=processing_steps.analysis_methods,
                         derivative_methods=processing_steps.derivative_methods,
                         soundslice_folder_id=soundslice_folder_id,
-                        title_lookup=title_lookup,
+                        score_metadata=metadata_lookup,  
                         has_metadata=has_metadata,
                     )
                     for p in score_paths
@@ -579,29 +629,31 @@ class CollectionProcessor:
 
                 for fut in as_completed(futures):
                     patch = fut.result()
-                    for s, values in patch.items():
-                        patches.setdefault(s, {}).update(values)
+                    for score, values in patch.items():
+                        metadata_patches.setdefault(score, {}).update(values)
 
         # Only write output CSV if we edited metadata content
-        if not patches:
+        if not metadata_patches:
             return None
 
         if processing_steps.allow_new_rows:
-            collection_metadata.upsert_row_updates(patches)
+            collection_metadata.upsert_row_updates(metadata_patches)
         else:
-            collection_metadata.apply_row_updates(patches)
+            collection_metadata.apply_row_updates(metadata_patches)
 
         if not save:
             return None
 
-        if metadata_csv_path is None:
+        if raw_path is None:
             out_path = (
-                context.collection_root
-                / f"{context.collection_root.name}_metadata_processed.csv"
+                    context.collection_root
+                    / f"{context.collection_root.name}_metadata_processed.csv"
             )
             return collection_metadata.save(output_path=str(out_path))
 
-        return collection_metadata.save()
+            # If given an input CSV, always write to "<input>_processed.csv"
+            # so repeated runs overwrite the same processed file
+        return collection_metadata.save(output_path=str(processed_path))
 
     def _resolve_score_paths(
         self,

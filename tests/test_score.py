@@ -11,6 +11,7 @@ import subprocess
 from moto import mock_aws
 from music21 import stream
 from pathlib import Path
+from pypdf import PdfWriter
 # local imports
 from utils.aws_utils import create_s3_bucket, check_s3_file_exists
 from score import Score, sync_to_s3
@@ -225,18 +226,17 @@ def test_convert_score_to_pdf(tmp_path, default_score, monkeypatch):
     """Test converting MusicXML to PDF (offline; no real LilyPond needed)."""
 
     # Ensure title is populated
-    # (our metadata pipeline guarantees this field will be filled)
     default_score.title = "Unit Test Title"
+
+    # Ensure footer file exists where convert_score_to_pdf expects it
+    footer_path = (Path(score_module.__file__).parent / "assets" /
+                   "itma_pdf_footer.pdf")
 
     # Define an output path in the temp directory
     output_pdf = tmp_path / "test_output.pdf"
 
-    # Setup fake LilyPond
-    monkeypatch.setattr(
-        default_score,
-        "_check_lilypond",
-        staticmethod(lambda: True)
-    )
+    # Fake LilyPond check
+    monkeypatch.setattr(score_module, "check_lilypond", lambda: True)
 
     def _fake_cli_run(cmd, check, capture_output, text=None, shell=False):
         # cmd is a list like ["musicxml2ly", "-o", "<ly_path>", "<xml_path>"]
@@ -267,7 +267,13 @@ def test_convert_score_to_pdf(tmp_path, default_score, monkeypatch):
             out_idx = cmd.index("-o") + 1
             output_stem = Path(cmd[out_idx])
             pdf_path = output_stem.with_suffix(".pdf")
-            pdf_path.write_bytes(b"%PDF-FAKE-CONTENT\n")
+
+            # Write a minimally valid PDF that pypdf can read/modify
+            writer = PdfWriter()
+            writer.add_blank_page(width=612, height=792)
+            with pdf_path.open("wb") as fp:
+                writer.write(fp)
+
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
         raise AssertionError(f"Unexpected subprocess command: {cmd!r}")
@@ -330,7 +336,7 @@ def test_convert_incipit_to_mp3(tmp_path, default_score):
 def test_copy_musicxml_file_to_aws(tmp_path):
     """Test uploading Score to AWS."""
     # Setup mock environment
-    bucket_name = "scores.itma.ie"
+    bucket_name = "port.itma.ie"
     create_s3_bucket(bucket_name)
 
     # Create a nested local dir structure under a temp collection root
@@ -451,7 +457,7 @@ def test_sync_to_s3_logic(tmp_path):
     Verifies the decorator correctly captures and uploads a returned
     Path.
     """
-    bucket_name = "scores.itma.ie"
+    bucket_name = "port.itma.ie"
     create_s3_bucket(bucket_name)
 
     # Define a temporary collection root
@@ -483,7 +489,7 @@ def test_sync_to_s3_logic(tmp_path):
 @mock_aws
 def test_abc_conversion_syncs_to_s3(tmp_path, default_score):
     """Verifies writing Score method outputs to S3 & capturing S3 paths."""
-    create_s3_bucket("scores.itma.ie")
+    create_s3_bucket("port.itma.ie")
 
     # Update default_score to have a collection_root
     default_score.collection_root = default_score.score_path.parent
@@ -499,8 +505,8 @@ def test_abc_conversion_syncs_to_s3(tmp_path, default_score):
         f"{default_score.score_path.with_suffix('.abc').name}"
     )
 
-    assert abc_uri == f"s3://scores.itma.ie/{expected_key}"
-    assert check_s3_file_exists("scores.itma.ie", expected_key) is True
+    assert abc_uri == f"s3://port.itma.ie/{expected_key}"
+    assert check_s3_file_exists("port.itma.ie", expected_key) is True
 
 
 @mock_aws
@@ -510,7 +516,7 @@ def test_sync_to_s3_with_organization(tmp_path):
     content and directory structure.
     """
     # Setup mock S3
-    bucket_name = "scores.itma.ie"
+    bucket_name = "port.itma.ie"
     create_s3_bucket(bucket_name)
 
     # Setup a mock collection in tmp_path

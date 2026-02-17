@@ -28,8 +28,7 @@ import pandas as pd
 from _metadata_schema import (
     CONSTANTS,
     METADATA_FIELDS,
-    OVERWRITE_FIELDS,
-    PRESERVE_FIELDS
+    OVERWRITE_FIELDS
 )
 
 

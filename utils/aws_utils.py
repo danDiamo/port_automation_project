@@ -1,9 +1,6 @@
 """
 This file contains Python functions that use the boto3 library to connect to
 Amazon AWS in Python using CLI credentials.
-
-Note: Much of this functionality may be replaced by direct calls
-to the AWS CLI.
 """
 
 # TODO: Add helper to list content under a specific prefix within a bucket?

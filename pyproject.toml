@@ -12,6 +12,7 @@ dependencies = [
     "music21>=9.9.1",
     "pandas>=2.3.3",
     "pandas-stubs~=2.3.3",
+    "pypdf>=6.7.0",
     "pytest>=9.0.2",
     "python-dotenv>=1.2.1",
     "soundsliceapi>=1.1",
