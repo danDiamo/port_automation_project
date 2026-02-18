@@ -315,7 +315,7 @@ def test_collection_processor_run_with_input_metadata_passes_metadata_adapter(
     collection_root, xml_dir = _make_collection_layout(tmp_path, name="Port")
     (xml_dir / "alpha.xml").write_text("<xml/>", encoding="utf-8")
 
-    metadata_csv = tmp_path / "metadata.csv"
+    metadata_csv = collection_root / "metadata.csv"
     metadata_csv.write_text("slug,title\nalpha,My Title\n", encoding="utf-8")
 
     def _fake_process_single_score(**kwargs: Any) -> dict[str, dict[str, Any]]:

@@ -2,7 +2,6 @@
 digital music score."""
 
 # TODO: type hinting
-# TODO: move helper functions to a separate file?
 
 # built-in imports
 import copy
@@ -81,6 +80,7 @@ def sync_to_s3(func):
         return filepath
 
     return wrapper
+
 
 class Score:
     # TODO: custom repr via title?
@@ -283,7 +283,6 @@ class Score:
             self.tune_type = None
             return self.title
 
-
         # Populate self.title from federated_search_term
         title = (
                 score_metadata.get("federated_search_term") or
@@ -437,7 +436,6 @@ class Score:
 
         return str(mode)
 
-
     @_load_score_content
     def extract_time_signature(self):
         """Extracts the time signature from the score."""
@@ -467,7 +465,6 @@ class Score:
             )
         # return first 4 bars of top melody line
         topline = content.parts[0]
-
 
         def _is_incomplete_bar(bar: music21.stream.Measure) -> bool:
             """
@@ -688,8 +685,8 @@ class Score:
         # barlines
         barlines = score.recurse().getElementsByClass(bar.Barline)
         part_structure = [
-                b for b in barlines if b.type in ('double', 'final')
-                               ]
+            b for b in barlines if b.type in ('double', 'final')
+        ]
         # count parts (total parts = number of barline markers)
         num_parts = len(part_structure)
 
@@ -801,7 +798,8 @@ class Score:
         # make Windows-compatible before passing to CLI
         is_windows = platform.system() == "Windows"
         # set tmp MusicXML file path
-        temp_xml = Path(tempfile.gettempdir()) / f"temp_fullscore_{os.getpid()}.xml"
+        temp_xml = Path(
+            tempfile.gettempdir()) / f"temp_fullscore_{os.getpid()}.xml"
 
         try:
             score_for_export = build_export_score_for_lilypond(
@@ -985,7 +983,8 @@ class Score:
 
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
-                f"SVG Conversion failed for incipit of {self.score_path.name}. "
+                f"SVG Conversion failed for incipit of "
+                f"{self.score_path.name}. "
                 f"Stderr: {e.stderr}"
             ) from e
         finally:
@@ -1089,7 +1088,6 @@ class Score:
             for p in [temp_midi, temp_wav]:
                 if p.exists():
                     os.remove(p)
-
 
     def _check_soundfont(self):
         """

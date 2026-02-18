@@ -1,11 +1,31 @@
-"""_metadata_schema.py holds the Port metadata schema, which is used to
+"""metadata_schema.py holds the Port metadata schema, which is used to
 validate and enforce field names in input & output metadata CSVs."""
 
 # Port metadata schema
-METADATA_FIELDS = {
+METADATA_FIELDS = (
+    'slug',  # Unique identifier field. Provided by ITMA.
     'title',  # provided by ITMA
+    'federated_search_term',  # Duplicate content from 'Title' field in
+    # this field.
     'alternative_title',  # Provided by ITMA
     'composer',  # provided by ITMA
+    'tune_type',  # Provided by ITMA.
+    'related_entries',  # Provided by ITMA
+    'explore_tag',  # May not be included?
+    'collection_tag',  # TODO: Populate. Content is always 'Port' string
+    'key_signature',  # TODO: populate from Score.extract_key_signature.
+    # Output format is subject to change
+    'mode',  # TODO: populate from Score.extract_mode_from_key_signature.
+    # Output format is subject to change
+    'tonic',
+    # TODO: populate from Score.extract_tonic_from_key_signature.
+    # Output format is subject to change
+    'time_signature',  # TODO: Populate from Score.extract_time_signature
+    'number_of_parts',  # TODO: Populate from Score.count_number_of_parts
+    'abc_notation',  # TODO: Populate from Score.convert_score_to_abc
+    # output stored in Score.abc attribute.
+    'bb_code',  # TODO: populate from Score.create_breathnach_codes
+    # Output format is subject to change
     'featured_image',  # TODO: Populate with AWS path to the incipit svg
     # file, as returned by Score.convert_incipit_to_svg
     'image_alt_text',  # TODO: Populate. Content is always
@@ -31,33 +51,13 @@ METADATA_FIELDS = {
     'video_catalog_url',  # Provided by ITMA
     'pdf_download',  # TODO: Populate with AWS path to score PDF file,
     # as returned by Score.convert_score_to_pdf()
-    'related_entries',  # Provided by ITMA
-    'tune_type',  # Provided by ITMA.
-    'explore_tag',  # May not be included?
-    'collection_tag',  # TODO: Populate. Content is always 'Port' string
-    'slug',  # Unique identifier field. Provided by ITMA.
-    'federated_search_term',  # Duplicate content from 'Title' field in
-    # this field.
-    'key_signature',  # TODO: populate from Score.extract_key_signature.
-    # Output format is subject to change
-    'mode',  # TODO: populate from Score.extract_mode_from_key_signature.
-    # Output format is subject to change
-    'tonic',
-    # TODO: populate from Score.extract_tonic_from_key_signature.
-    # Output format is subject to change
-    'time_signature',  # TODO: Populate from Score.extract_time_signature
-    'number_of_parts',  # TODO: Populate from Score.count_number_of_parts
-    'abc_notation',  # TODO: Populate from Score.convert_score_to_abc
-    # output stored in Score.abc attribute.
-    'bb_code',  # TODO: populate from Score.create_breathnach_codes
-    # Output format is subject to change
     'midi_audio_full',  # TODO: populate with path to MIDI audio file,
     # as returned by Score.write_score_to_midi
     'incipit_audio',  # TODO: populate with path to mp3 file, , as returned by
     # Score.convert_incipit_to_mp3
     'musicxml'  # TODO: AWS path to MusicXML file, as returned by
     # Score.copy_musicxml_file_to_aws
-}
+)
 
 PRESERVE_FIELDS = {
     # we do not edit or overwrite content in these fields
@@ -74,14 +74,14 @@ PRESERVE_FIELDS = {
     "video_title",
     "video_catalog_url",
     "related_entries",
-    "tune_type",
-    "explore_tag",
+    "tune_type"
 }
 
 OVERWRITE_FIELDS = {
     # pipeline-enforced constants
     "image_alt_text",
     "collection_tag",
+    "explore_tag",
     "score_track_rights",
     "score_track2_rights",
     # editable but only under strictly-enforced conditions (only if empty)
@@ -111,13 +111,13 @@ CONSTANTS = {
     # these fields simply hold constant values, which are auto-populated via
     # our pipeline
     "image_alt_text": "Musical Notation",
-    "collection_tag": "Port",
+    "explore_tag": "Port",
     "score_track_rights": "In Copyright",
     "score_track2_rights": "In Copyright",
 }
 
 # confirm the sets above have no overlap
-assert METADATA_FIELDS == set(CONSTANTS) | PRESERVE_FIELDS | OVERWRITE_FIELDS
-
-# list all field names in order for use as master index in our schema
-MASTER_METADATA_FIELD_INDEX = list(METADATA_FIELDS)
+assert (
+        set(METADATA_FIELDS) == set(CONSTANTS) | PRESERVE_FIELDS |
+        OVERWRITE_FIELDS
+)

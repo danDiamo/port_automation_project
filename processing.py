@@ -509,6 +509,21 @@ class CollectionProcessor:
         # set up metadata in and out paths
         raw_path: Path | None = Path(
             metadata_csv_path) if metadata_csv_path else None
+
+        if raw_path is not None:
+            raw_path = raw_path.expanduser().resolve()
+            collection_root_resolved = context.collection_root.expanduser(
+            ).resolve()
+
+            # input metadata CSV must live inside collection root
+            if not raw_path.is_relative_to(collection_root_resolved):
+                raise ValueError(
+                    "Input metadata CSV stored at:\n"
+                    f"{raw_path} must be stored inside the collection "
+                    f"root folder:\n"
+                    f"{collection_root_resolved}\n"
+                )
+
         processed_path: Path | None = (
             raw_path.with_name(f"{raw_path.stem}_processed{raw_path.suffix}")
             if raw_path is not None
@@ -524,16 +539,33 @@ class CollectionProcessor:
             in_path = processed_path if (
                     processed_path and processed_path.exists()
             ) else raw_path
-            collection_metadata = CollectionMetadata(str(in_path))
+            collection_metadata = CollectionMetadata(
+                str(in_path),
+                collection_root=context.collection_root
+            )
             collection_metadata.load_collection_metadata()
         else:
             if csv_out_path.exists():
-                collection_metadata = CollectionMetadata(str(
-                    csv_out_path))
+                collection_metadata = CollectionMetadata(
+                    str(csv_out_path),
+                    collection_root=context.collection_root
+                )
                 collection_metadata.load_collection_metadata()
             else:
-                collection_metadata = CollectionMetadata(None)
+                collection_metadata = CollectionMetadata(
+                    None,
+                    collection_root=context.collection_root
+                )
                 collection_metadata.create_empty_metadata_table()
+
+        # derive collection_tag if available (only run once per collection &
+        # don't fail if it's not available)
+        try:
+            collection_metadata.collection_tag = (
+                collection_metadata.derive_collection_tag_from_collection_root()
+            )
+        except ValueError:
+            pass
 
         # Build a lookup of just the metadata fields Score needs.
         metadata_lookup: dict[str, dict[str, str]] | None = None

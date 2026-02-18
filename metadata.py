@@ -25,7 +25,7 @@ from typing import Any
 
 import pandas as pd
 
-from _metadata_schema import (
+from metadata_schema import (
     CONSTANTS,
     METADATA_FIELDS,
     OVERWRITE_FIELDS
@@ -107,7 +107,12 @@ class CollectionMetadata:
     # store our metadata key as a class constant
     KEY_COL = "slug"
 
-    def __init__(self, metadata_path: str | os.PathLike[str] | None):
+    def __init__(
+            self,
+            metadata_path: str | os.PathLike[str] | None,
+            *,
+            collection_root: str | os.PathLike[str] | None = None,
+    ):
         """Initializes CollectionMetadata object with optional metadata path.
 
         Args:
@@ -118,7 +123,23 @@ class CollectionMetadata:
         """
         self.metadata_path = str(metadata_path) if metadata_path is not None\
             else None
+        self.collection_root = (
+            Path(collection_root) if collection_root is not None else None
+        )
         self.metadata: pd.DataFrame | None = None
+        self.collection_tag: str | None = None
+
+    def derive_collection_tag_from_collection_root(self) -> str:
+        """
+        Derive collection name from collection_root path, for use in
+        'collection_tag' metadata field.
+        """
+        if self.collection_root is None:
+            raise ValueError("Cannot derive collection name. "
+                             "Collection root directory is not defined.")
+        # derive collection root from metadata path
+        collection_tag = self.collection_root.name.replace("_", " ")
+        return collection_tag
 
     def load_collection_metadata(self) -> pd.DataFrame:
         """Loads, validates, and normalizes collection metadata"""
@@ -133,7 +154,7 @@ class CollectionMetadata:
         last_error: Exception | None = None
         df: pd.DataFrame | None = None
         
-        # try to read CSV with multiple Windows-friewndly encodings in case 
+        # try to read CSV with multiple Windows-friendly encodings in case
         # of formatting issues relating to Excel usage in external metadata 
         # processing work 
         for enc in encodings_to_try:
@@ -406,7 +427,7 @@ class CollectionMetadata:
             orient="index"
         ).astype("string")
 
-        # explicitly allow edits to OVERWRITE_FIELDS metadata fields only.
+        # allow edits to OVERWRITE_FIELDS metadata fields only.
         overwrite_cols = \
             [c for c in update_df.columns if c in OVERWRITE_FIELDS]
         illegal_cols = \
@@ -426,6 +447,9 @@ class CollectionMetadata:
         # Fill CONTSTANTS fields default values as defined in metadata schema
         for field, value in CONSTANTS.items():
             metadata_table.loc[ids, field] = value
+        # populate collection_tag field if possible
+        if self.collection_tag:
+            metadata_table.loc[ids, "collection_tag"] = self.collection_tag
 
     @staticmethod
     def _atomic_to_csv(

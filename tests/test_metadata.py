@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from _metadata_schema import METADATA_FIELDS
+from metadata_schema import METADATA_FIELDS
 from metadata import CollectionMetadata, ScoreMetadata
 
 
@@ -95,7 +95,7 @@ def test_upsert_row_updates_creates_missing_row_and_populates_fields(tmp_path: P
 
     # Constants should be populated for newly created rows too
     assert md.metadata.loc[new_slug, "image_alt_text"] == "Musical Notation"
-    assert md.metadata.loc[new_slug, "collection_tag"] == "Port"
+    assert md.metadata.loc[new_slug, "explore_tag"] == "Port"
     assert md.metadata.loc[new_slug, "score_track_rights"] == "In Copyright"
     assert md.metadata.loc[new_slug, "score_track2_rights"] == "In Copyright"
 
@@ -144,7 +144,7 @@ def test_apply_row_updates_and_enforce_constants_happy_path(tmp_path: Path):
 
     # Constants should be populated
     assert md.metadata.loc["alpha", "image_alt_text"] == "Musical Notation"
-    assert md.metadata.loc["alpha", "collection_tag"] == "Port"
+    assert md.metadata.loc["alpha", "explore_tag"] == "Port"
     assert md.metadata.loc["alpha", "score_track_rights"] == "In Copyright"
     assert md.metadata.loc["alpha", "score_track2_rights"] == "In Copyright"
 
