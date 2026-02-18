@@ -11,51 +11,40 @@ METADATA_FIELDS = (
     'composer',  # provided by ITMA
     'tune_type',  # Provided by ITMA.
     'related_entries',  # Provided by ITMA
-    'explore_tag',  # May not be included?
-    'collection_tag',  # TODO: Populate. Content is always 'Port' string
-    'key_signature',  # TODO: populate from Score.extract_key_signature.
-    # Output format is subject to change
-    'mode',  # TODO: populate from Score.extract_mode_from_key_signature.
-    # Output format is subject to change
-    'tonic',
-    # TODO: populate from Score.extract_tonic_from_key_signature.
-    # Output format is subject to change
-    'time_signature',  # TODO: Populate from Score.extract_time_signature
-    'number_of_parts',  # TODO: Populate from Score.count_number_of_parts
-    'abc_notation',  # TODO: Populate from Score.convert_score_to_abc
-    # output stored in Score.abc attribute.
-    'bb_code',  # TODO: populate from Score.create_breathnach_codes
-    # Output format is subject to change
-    'featured_image',  # TODO: Populate with AWS path to the incipit svg
+    'explore_tag',  # Constant: content is always 'Port' string
+    'collection_tag',  # Stores collection name tag, auto-derived from
+    # collection root directory path
+    'key_signature',  # holds key detected via Score.detect_key.
+    'mode',  # holds mode populated via Score.extract_mode_from_key_signature.
+    'tonic', # holds mode populated via Score.extract_tonic_from_key_signature.
+    'time_signature',  # populated via Score.extract_time_signature
+    'number_of_parts',  # populated via Score.count_number_of_parts
+    'abc_notation',  # Populated via Score.convert_score_to_abc
+    'bb_code',  # populated via Score.create_breathnach_codes
+    'featured_image',  # holds AWS path to the incipit svg
     # file, as returned by Score.convert_incipit_to_svg
-    'image_alt_text',  # TODO: Populate. Content is always
-    # 'Musical Notation' string
+    'image_alt_text',  # Constant: Content is always 'Musical Notation' string
     'summary',  # Provided by ITMA: 'from [Collection name]'
     'main_textbox',  # provided by ITMA
-    'soundslice_iframe',  # TODO: populate embed link for Soundslice iframe
-    # Note: first we need to add Soundslice integration to the Score class
-    'score_track_title',  # Provided by ITMA (catalogue title field)
-    'score_track_mp3',  # Provided by ITMA. AWS path to performance mp3
-    # file, if provided.
-    'score_track_rights',  # TODO: Populate. Content is always
-    # 'In Copyright' string
+    'soundslice_iframe',  # holds Soundslice scorehash
+    'score_track_title',  # Provided by ITMA
+    'score_track_mp3',  # Holds AWS path to performance mp3 file, if provided.
+    'score_track_rights',  # Constant: Content is always 'In Copyright' string
     'score_track_catalog_url',  # Provided by ITMA, online catalogue link
     'score_track2_title',  # Provided by ITMA (slow recording title field)
-    'score_track2_mp3',  # # Provided by ITMA (path to slow recording mp3
-    # file on AWS)
-    'score_track2_rights',  # TODO: Populate. Content is always
-    # 'In Copyright' string
+    'score_track2_mp3',  # Holds AWS path to slow recording mp3 file
+    'score_track2_rights',  # Constant: Content is always 'In Copyright' string
     'score_track2_catalog_url',  # Provided by ITMA, online catalogue link
     'video_url',  # Provided by ITMA, Youtube embed code
-    'video_title',  # Provided by ITMA (catalogue title field)
+    'video_title',  # Provided by ITMA, catalogue title field
     'video_catalog_url',  # Provided by ITMA
-    'pdf_download',  # TODO: Populate with AWS path to score PDF file,
-    # as returned by Score.convert_score_to_pdf()
-    'midi_audio_full',  # TODO: populate with path to MIDI audio file,
-    # as returned by Score.write_score_to_midi
-    'incipit_audio',  # TODO: populate with path to mp3 file, , as returned by
+    'pdf_download',  # Holds AWS path to score PDF file, as returned by
+    # Score.convert_score_to_pdf()
+    'midi_audio_full',  # Holds AWS path to MIDI audio file, as returned by
+    # Score.write_score_to_midi
+    'incipit_audio',  # Holds path to mp3 file, as returned by
     # Score.convert_incipit_to_mp3
-    'musicxml'  # TODO: AWS path to MusicXML file, as returned by
+    'musicxml'  # Holds AWS path to MusicXML file, as returned by
     # Score.copy_musicxml_file_to_aws
 )
 
