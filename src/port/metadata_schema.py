@@ -85,7 +85,6 @@ OVERWRITE_FIELDS = {
     "musicxml",
     "score_track_mp3",
     "score_track2_mp3",
-
     # pipeline-derived analysis / representations
     "key_signature",
     "mode",

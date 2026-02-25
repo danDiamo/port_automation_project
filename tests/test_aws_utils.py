@@ -4,7 +4,7 @@ Python library means we no longer need to connect to AWS via the CLI app.
 
 """
 
-from utils.aws_utils import (
+from port.utils.aws_utils import (
     check_s3_file_exists,
     copy_mp3_to_aws,
     create_s3_bucket,

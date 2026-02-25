@@ -10,8 +10,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from metadata_schema import METADATA_FIELDS
-from metadata import CollectionMetadata, ScoreMetadata
+from port.metadata_schema import METADATA_FIELDS
+from port.metadata import CollectionMetadata, ScoreMetadata
 
 
 # =============================================================================

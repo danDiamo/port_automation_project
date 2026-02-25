@@ -7,7 +7,7 @@ test_score.py.
 
 """
 
-# TODO: Inspect new content; line lengths/wrap
+# TODO: Inspect new content
 
 from __future__ import annotations
 
@@ -419,20 +419,80 @@ def _part_has_structural_barlines(raw_part: music21.stream.Part) -> bool:
     """
     True if the source part contains barlines that define internal structure
     (repeat/double/final).
+
+    We treat these as "structural" because they may reflect repeat/section
+    boundaries that rebarring could inadvertently change.
     """
     for raw_bar in raw_part.recurse().getElementsByClass(
             music21.stream.Measure):
         lb = getattr(raw_bar, "leftBarline", None)
         rb = getattr(raw_bar, "rightBarline", None)
+
         for b in (lb, rb):
             if b is not None and getattr(b, "type", None) in ("double",
                                                               "final",
                                                               "repeat"):
                 return True
+
         for bl in raw_bar.getElementsByClass(bar.Barline):
             if getattr(bl, "type", None) in ("double", "final", "repeat"):
                 return True
+
     return False
+
+
+_EPS_Q = 1e-6  # quarterLength tolerance for "incomplete bar" comparisons
+_GRACE_ANCHOR_EPS = 1e-4  # small negative offsets to keep grace notes ordered
+
+
+def _active_time_signature(
+        measure: music21.stream.Measure,
+        *,
+        default_time_sig: meter.TimeSignature,
+) -> meter.TimeSignature:
+    """
+    Resolve the active time signature for `measure`.
+
+    Prefer an explicit time signature, otherwise use Music21 context lookup,
+    and finally fall back to the project's default time signature.
+    """
+    return (
+            measure.timeSignature
+            or measure.getContextByClass(meter.TimeSignature)
+            or default_time_sig
+    )
+
+
+def _is_incomplete_measure(
+        measure: music21.stream.Measure,
+        *,
+        default_time_sig: meter.TimeSignature,
+) -> bool:
+    """
+    True if the measure is shorter than the expected bar duration under the
+    active time signature. This is our pickup/anacrusis heuristic.
+    """
+    ts = _active_time_signature(measure, default_time_sig=default_time_sig)
+    expected = float(ts.barDuration.quarterLength)
+    actual = float(measure.duration.quarterLength)
+    return actual < (expected - _EPS_Q)
+
+
+def _copy_all_at_offsets(
+        *,
+        src: music21.stream.Stream,
+        dst: music21.stream.Stream,
+        cls: type[music21.base.Music21Object],
+) -> None:
+    """
+    Copy all elements of a given Music21 class from `src` into `dst`,
+    preserving offsets.
+
+    Used for clefs and key signatures to ensure the exported stream has enough
+    context for conversion.
+    """
+    for el in src.recurse().getElementsByClass(cls):
+        dst.insert(float(el.offset), copy.deepcopy(el))
 
 
 def _normalize_part_for_lilypond(
@@ -440,54 +500,56 @@ def _normalize_part_for_lilypond(
         raw_part: music21.stream.Part,
         score_stream: music21.stream.Score,
         default_time_sig: meter.TimeSignature,
-        strict: bool,
-        score_label: str,
-) -> music21.stream.Part:
+) -> tuple[music21.stream.Part, bool]:
     """
-    Normalize a Part/PartStaff so musicxml2ly doesn't drop bars.
+    Normalize a Part/PartStaff so musicxml2ly is less likely to drop bars.
 
-    - Uses GLOBAL offsets when copying notes/rests (prevents accidental
-    overlap/extra voices).
-    - Copies time signatures, clefs, key signatures.
-    - Rebars with makeMeasures().
-    - If strict=True, requires that structural barlines can be remapped
-    reliably
-      (otherwise raises RuntimeError).
+    Returns:
+        (clean_part, bar_count_changed)
+
+    Key changes in this version:
+      - We preserve bar boundaries instead of calling makeMeasures().
+        This prevents pickups from being merged with first bar and avoids
+        persistent issue with subsequent offsets shifting by half a bar.
     """
-    clean_part: music21.stream.Part
-    if isinstance(raw_part, music21.stream.PartStaff):
-        clean_part = music21.stream.PartStaff()
-    else:
-        clean_part = music21.stream.Part()
+    clean_part: music21.stream.Part = (
+        music21.stream.PartStaff()
+        if isinstance(raw_part, music21.stream.PartStaff)
+        else music21.stream.Part()
+    )
 
-    # --- structural context: time sig / clef / key ---
-    time_sigs_in_part = list(
+    # Copy structural context: time signature(s), clef(s), key signature(s)
+    time_sigs = list(
         raw_part.recurse().getElementsByClass(meter.TimeSignature))
-    if not time_sigs_in_part:
-        time_sigs_from_score = list(
-            score_stream.recurse().getElementsByClass(meter.TimeSignature))
-        time_sigs_in_part = time_sigs_from_score[
-            :] if time_sigs_from_score else [default_time_sig]
+    if not time_sigs:
+        score_time_sigs = list(
+            score_stream.recurse().getElementsByClass(meter.TimeSignature)
+        )
+        time_sigs = score_time_sigs[:] if score_time_sigs else [
+            default_time_sig]
 
-    for ts in time_sigs_in_part:
+    for ts in time_sigs:
         clean_part.insert(float(ts.offset), copy.deepcopy(ts))
 
-    for c in raw_part.recurse().getElementsByClass(clef.Clef):
-        clean_part.insert(float(c.offset), copy.deepcopy(c))
+    _copy_all_at_offsets(src=raw_part, dst=clean_part, cls=clef.Clef)
+    _copy_all_at_offsets(src=raw_part, dst=clean_part, cls=key.KeySignature)
 
-    for ks in raw_part.recurse().getElementsByClass(key.KeySignature):
-        clean_part.insert(float(ks.offset), copy.deepcopy(ks))
+    def _copy_notes_and_rests_with_grace_anchoring(
+            src_stream: music21.stream.Stream,
+            dst_stream: music21.stream.Stream,
+    ) -> None:
+        """
+        Copy notes/rests from source src_stream to destination dst_stream. If
+         grace notes are present in any voice their location/offset is
+         preserved and they are placed immediately before the next
+         non-grace object in the destination stream.
 
-    # --- notes/rests with GLOBAL offsets + grace anchoring ---
-    pending_graces: list[music21.note.Note] = []
-    eps = 1e-4
+        This keeps ordering stable when grace notes share the same
+        offset across voices.
+        """
+        pending_graces: list[music21.note.Note] = []
 
-    raw_bars = list(
-        raw_part.recurse().getElementsByClass(music21.stream.Measure))
-    for raw_bar in raw_bars:
-        bar_offset = float(raw_bar.offset)
-
-        for el in raw_bar.notesAndRests:
+        for el in src_stream.notesAndRests:
             dur = getattr(el, "duration", None)
             is_grace = bool(dur is not None and getattr(dur, "isGrace", False))
 
@@ -495,58 +557,41 @@ def _normalize_part_for_lilypond(
                 pending_graces.append(copy.deepcopy(el))
                 continue
 
-            anchor_offset = bar_offset + float(el.offset)
+            anchor_offset = float(el.offset)
 
             if pending_graces:
+                # inserts grace notes before anchor element
                 for i, gn in enumerate(pending_graces):
-                    back = eps * (len(pending_graces) - i)
-                    clean_part.insert(max(0.0, anchor_offset - back), gn)
+                    back = _GRACE_ANCHOR_EPS * (len(pending_graces) - i)
+                    dst_stream.insert(max(0.0, anchor_offset - back), gn)
                 pending_graces.clear()
 
-            clean_part.insert(anchor_offset, copy.deepcopy(el))
+            dst_stream.insert(anchor_offset, copy.deepcopy(el))
 
-    for gn in pending_graces:
-        clean_part.append(gn)
-    pending_graces.clear()
+    raw_measures = list(
+        raw_part.recurse().getElementsByClass(music21.stream.Measure))
 
-    # Rebar once content is correctly placed in time.
-    clean_part.makeMeasures(inPlace=True)
+    for m_idx, raw_measure in enumerate(raw_measures):
+        new_measure = music21.stream.Measure(
+            number=getattr(raw_measure, "number", None))
+        # set implicit True/False for pickup
+        voices = list(raw_measure.getElementsByClass(music21.stream.Voice))
+        if voices:
+            for v in voices:
+                new_voice = music21.stream.Voice()
+                _copy_notes_and_rests_with_grace_anchoring(v, new_voice)
+                new_measure.insert(float(v.offset), new_voice)
+        else:
+            _copy_notes_and_rests_with_grace_anchoring(raw_measure,
+                                                       new_measure)
 
-    # Bars should be explicit to reduce downstream ambiguity
-    for new_bar in clean_part.recurse().getElementsByClass(
-            music21.stream.Measure):
-        new_bar.implicit = False
+        # Insert the rebuilt bar at the original start offset.
+        clean_part.insert(float(raw_measure.offset), new_measure)
 
-    # --- strict remap of structural barlines (if required) ---
-    if strict:
-        new_bars = list(
-            clean_part.recurse().getElementsByClass(music21.stream.Measure))
-        if len(new_bars) != len(raw_bars):
-            raise RuntimeError(
-                f"Cannot preserve structure for {score_label}: "
-                f"bar count changed during normalization (src="
-                f"{len(raw_bars)}, dst={len(new_bars)})."
-            )
+    # Since we preserved bar boundaries, bar count does not change here.
+    bar_count_changed = False
 
-        for old_bar, new_bar in zip(raw_bars, new_bars, strict=False):
-            if getattr(old_bar, "leftBarline", None) is not None:
-                new_bar.leftBarline = copy.deepcopy(old_bar.leftBarline)
-            if getattr(old_bar, "rightBarline", None) is not None:
-                new_bar.rightBarline = copy.deepcopy(old_bar.rightBarline)
-
-            for bl in old_bar.getElementsByClass(bar.Barline):
-                # If this fails, we do not want to silently degrade a
-                # complex score.
-                try:
-                    new_bar.insert(float(bl.offset), copy.deepcopy(bl))
-                except Exception as e:
-                    raise RuntimeError(
-                        f"Cannot preserve structure for {score_label}: "
-                        f"failed to remap barline (type="
-                        f"{getattr(bl, 'type', None)!r})."
-                    ) from e
-
-    return clean_part
+    return clean_part, bar_count_changed
 
 
 def build_export_score_for_lilypond(
@@ -556,14 +601,12 @@ def build_export_score_for_lilypond(
         score_label: str,
 ) -> music21.stream.Score:
     """
-    Build a normalized export Score suitable for musicxml2ly.
+    Build a normalized export Score for musicxml2ly.
 
-    Policy:
-      - Simple tunes: normalize, but do not require strict structural
-      remapping.
-      - Complex inputs (PartStaff, staff groups, or structural barlines
-      present):
-        require strict remapping; any remap issue raises.
+      - Always normalize parts.
+      - Attempt StaffGroup preservation; skip it if we can't remap safely.
+      - Warn once per score if we encounter any structural concern during
+        normalization/remapping.
     """
     export_score = music21.stream.Score()
     default_time_sig = meter.TimeSignature(default_time_sig_str)
@@ -571,57 +614,65 @@ def build_export_score_for_lilypond(
     raw_parts = list(score_stream.parts)
     staff_groups = list(
         score_stream.recurse().getElementsByClass(layout.StaffGroup))
-    has_staff_groups = bool(staff_groups)
+
+    structural_concern = False
+
+    # Structural concern: no time signature anywhere in the input score.
+    # In this case we will fall back to DEFAULT_TIME_SIG during
+    # normalization and warn the user via the warning at end of this function.
+    if not list(
+            score_stream.recurse().getElementsByClass(meter.TimeSignature)):
+        structural_concern = True
 
     part_map: dict[int, music21.stream.Part] = {}
 
     for raw_part in raw_parts:
-        strict = (
-                isinstance(raw_part, music21.stream.PartStaff)
-                or _part_has_structural_barlines(raw_part)
-                or has_staff_groups
-        )
-
-        clean_part = _normalize_part_for_lilypond(
+        clean_part, bar_count_changed = _normalize_part_for_lilypond(
             raw_part=raw_part,
             score_stream=score_stream,
             default_time_sig=default_time_sig,
-            strict=strict,
-            score_label=score_label,
         )
+        if bar_count_changed:
+            structural_concern = True
+
         part_map[id(raw_part)] = clean_part
         export_score.append(clean_part)
 
-    # StaffGroup remap: if groups exist, treat as complex and fail if we
-    # cannot remap.
-    if has_staff_groups:
-        for sg in staff_groups:
-            sg_copy = copy.deepcopy(sg)
+    # Try to preserve StaffGroup structures: if we can't safely remap,
+    # skip and mark as a structural concern.
+    for sg in staff_groups:
+        sg_copy = copy.deepcopy(sg)
 
-            getter = getattr(sg_copy, "getSpannedElements", None)
-            setter = getattr(sg_copy, "addSpannedElements", None)
-            if not (callable(getter) and callable(setter)):
-                raise RuntimeError(
-                    f"Cannot preserve staff grouping for {score_label}: "
-                    "StaffGroup API unavailable for remapping."
-                )
+        getter = getattr(sg_copy, "getSpannedElements", None)
+        setter = getattr(sg_copy, "addSpannedElements", None)
+        if not (callable(getter) and callable(setter)):
+            structural_concern = True
+            continue
 
-            old_spanned = list(getter())
-            new_spanned: list[music21.stream.Part] = []
-            for el in old_spanned:
-                mapped = part_map.get(id(el))
-                if mapped is None:
-                    raise RuntimeError(
-                        f"Cannot preserve staff grouping for {score_label}: "
-                        "failed to remap a grouped part."
-                    )
-                new_spanned.append(mapped)
+        new_spanned: list[music21.stream.Part] = []
+        for el in list(getter()):
+            mapped = part_map.get(id(el))
+            if mapped is None:
+                structural_concern = True
+                new_spanned = []
+                break
+            new_spanned.append(mapped)
 
-            clearer = getattr(sg_copy, "spannedElements", None)
-            if isinstance(clearer, list):
-                sg_copy.spannedElements = []
-            setter(*new_spanned)
+        if not new_spanned:
+            continue
 
-            export_score.insert(0.0, sg_copy)
+        if isinstance(getattr(sg_copy, "spannedElements", None), list):
+            sg_copy.spannedElements = []
+        setter(*new_spanned)
+
+        export_score.insert(0.0, sg_copy)
+
+    if structural_concern:
+        warnings.warn(
+            f"Score {score_label}: structural normalization issues detected. "
+            f"Please inspect output; if issues are found, clean up the "
+            f"input MusicXML and re-run.",
+            UserWarning,
+        )
 
     return export_score

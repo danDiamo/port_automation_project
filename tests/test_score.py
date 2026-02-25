@@ -13,9 +13,9 @@ from music21 import stream
 from pathlib import Path
 from pypdf import PdfWriter
 # local imports
-from utils.aws_utils import create_s3_bucket, check_s3_file_exists
-from score import Score, sync_to_s3
-import score as score_module
+from port.utils.aws_utils import create_s3_bucket, check_s3_file_exists
+from port.score import Score, sync_to_s3
+from port import score as score_module
 
 # Get cwd
 BASE_DIR = Path(__file__).resolve().parent

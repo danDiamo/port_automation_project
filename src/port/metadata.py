@@ -25,7 +25,7 @@ from typing import Any
 
 import pandas as pd
 
-from metadata_schema import (
+from .metadata_schema import (
     CONSTANTS,
     METADATA_FIELDS,
     OVERWRITE_FIELDS

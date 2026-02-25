@@ -19,20 +19,19 @@ from typing import Any
 # external imports
 import music21
 from dotenv import load_dotenv
-from abc_xml_converter import convert_xml2abc
 from music21 import bar, key, meter, note
 from soundsliceapi import Client, Constants
 
 # local imports
-from utils.aws_utils import upload_file_to_s3
-from utils.pdf_utils import (
+from .utils.aws_utils import upload_file_to_s3
+from .utils.pdf_utils import (
     apply_pdf_footer_to_all_pages_in_score,
     build_export_score_for_lilypond,
     check_lilypond,
     cleanup_lilypond_formatting,
     pad_svg_file
 )
-from utils.soundslice_utils import get_soundslice_credentials_from_env
+from .utils.soundslice_utils import get_soundslice_credentials_from_env
 
 # Load .env to access API credentials
 load_dotenv()
@@ -749,15 +748,25 @@ class Score:
             output_path = Path(output_path)
 
         try:
+            # Import lazily to avoid argparse/sys.argv side-effects.
+            from abc_xml_converter import convert_xml2abc
             # Use pathlib to read the xml content as text
             xml_content = self.score_path.read_text(encoding='utf-8')
-            # convert to ABC notation
-            abc_content = convert_xml2abc(
-                file_to_convert=xml_content,
-                output_directory='',
-                bars_per_line=4,
-                file_to_convert_is_txt=True
-            )
+            # Some third-party tools parse sys.argv internally (argparse) and
+            # choke on Port's CLI flags. Sandbox argv for this call.
+            old_argv = sys.argv
+            try:
+                sys.argv = [old_argv[0]]
+
+                # convert to ABC notation
+                abc_content = convert_xml2abc(
+                    file_to_convert=xml_content,
+                    output_directory='',
+                    bars_per_line=4,
+                    file_to_convert_is_txt=True
+                )
+            finally:
+                sys.argv = old_argv
 
             output_path.write_text(abc_content, encoding='utf-8')
             self.abc = abc_content
@@ -777,7 +786,7 @@ class Score:
         Converts the score to a PDF using LilyPond CLI.
         Handles OS-specific commands (Windows & Mac-compatible).
 
-        Uses a normalized Music21 -> MusicXML export to reduce bar dropping
+        Uses Music21 -> MusicXML export to reduce bar dropping
         in musicxml2ly. Simple inputs proceed; complex inputs fail fast if any
         structural remapping cannot be guaranteed.
         """
@@ -1102,7 +1111,7 @@ class Score:
         if not soundfont_path.exists():
             warnings.warn("SoundFont not found. Attempting to download...",
                           UserWarning)
-            setup_soundfont = project_root / "setup_general_user_gs.py"
+            setup_soundfont = project_root / "sondfont.py"
 
             if not setup_soundfont.exists():
                 raise FileNotFoundError(

@@ -11,3 +11,10 @@ uv.lock
 /.venv/
 /assets/
 /assets/GeneralUser-GS.sf2
+# Packaging / build artifacts
+*.egg-info/
+build/
+dist/
+release_build/
+release_out/
+*.zip

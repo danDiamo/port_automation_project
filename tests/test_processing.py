@@ -1,7 +1,7 @@
-# TODO: Docstrings
+# TODO: Docstrings/reformat
 
 """
-Happy-path unit & integration(ish) tests for processing.py.
+This file holds happy-path unit & integration(ish) tests for processing.py.
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ from typing import Any, Callable
 import pandas as pd
 import pytest
 
-import processing as processing_module
-from processing import (
+from port import processing as processing_module
+from port.processing import (
     CollectionContext,
     CollectionProcessor,
     ScoreProcessingOrchestrator,

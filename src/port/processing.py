@@ -22,10 +22,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from utils.aws_utils import copy_mp3_to_aws
-from metadata import CollectionMetadata
-from score import Score
-from utils.soundslice_utils import check_soundslice_folder_exists
+from .metadata import CollectionMetadata
+from .score import Score
+from .utils.aws_utils import copy_mp3_to_aws
+from .utils.soundslice_utils import check_soundslice_folder_exists
 
 
 def _get_itma_id_from_path(score_path: Path) -> str:
@@ -480,6 +480,18 @@ class CollectionProcessor:
     def __init__(self, score_processor: ScoreProcessor | None = None):
         self.score_processor = score_processor or ScoreProcessor()
 
+    def resolve_score_paths(
+        self,
+        *,
+        collection_root: str | Path,
+        selection: ScoreSelection,
+    ) -> list[Path]:
+        """
+        Public wrapper to interface with CLI & resolve input paths.
+        """
+        context = CollectionContext(collection_root=Path(collection_root))
+        return self._resolve_score_paths(context=context, selection=selection)
+
     def run(
         self,
         *,
@@ -488,9 +500,21 @@ class CollectionProcessor:
         processing_steps: ScoreProcessingOrchestrator,
         metadata_csv_path: str | Path | None = None,
         save: bool = True,
+        progress: Any | None = None,
     ) -> str | None:
         """
         Run collection processing, metadata updates, and create outputs.
+
+        Args:
+            -- collection_root: Collection root directory.
+            -- selection: Score(s) to process.
+            -- processing_steps: Select processing mode & optionally select
+                individual processing step(s).
+            -- metadata_csv_path: Optional metadata CSV path.
+            -- save: If False, do not write any output CSV.
+            -- progress: Optional TQDM progress bar.
+                If provided, this method will call progress.update(1) after
+                each score completes (in serial or parallel).
         """
         context = CollectionContext(collection_root=Path(collection_root))
         score_paths = self._resolve_score_paths(
@@ -639,6 +663,9 @@ class CollectionProcessor:
                 )
                 for score, values in patch.items():
                     metadata_patches.setdefault(score, {}).update(values)
+                # update progress bar
+                if progress is not None:
+                    progress.update(1)
 
         else:
             with ProcessPoolExecutor(
@@ -663,6 +690,9 @@ class CollectionProcessor:
                     patch = fut.result()
                     for score, values in patch.items():
                         metadata_patches.setdefault(score, {}).update(values)
+                    # update progress bar
+                    if progress is not None:
+                        progress.update(1)
 
         # Only write output CSV if we edited metadata content
         if not metadata_patches:
