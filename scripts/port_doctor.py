@@ -14,6 +14,8 @@ Exit codes:
 - 1: one or more required checks failed
 """
 
+# TODO: Inspect
+
 from __future__ import annotations
 
 import platform

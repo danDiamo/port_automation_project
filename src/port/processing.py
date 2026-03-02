@@ -612,6 +612,7 @@ class CollectionProcessor:
                     "title": str(row.get("title")).strip(),
                     "tune_type": str(row.get("tune_type")).strip(),
                     "composer": str(row.get("composer")).strip(),
+                    "source": str(row.get("source")).strip()
                 }
 
             # If we have an input metadata CSV, treat it as source of truth:

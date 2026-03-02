@@ -101,6 +101,9 @@ class Score:
     metadata_path -- path to a csv file containing metadata for the score.
     abc -- ABC notation representation of the score.
     title -- canonical title of the score.
+    composer -- composer name.
+    tune_type -- type of tune (jig, reel, hornpipe, etc).
+    source -- source of the score (collection name).
     """
 
     # fallback time sig to avoid blank entries, implemented per ITMA's
@@ -134,6 +137,7 @@ class Score:
         self.title = None
         self.composer = None
         self.tune_type = None
+        self.source = None
 
     def _validate_score_file(self):
         """
@@ -221,13 +225,13 @@ class Score:
         Assign canonical title:
         Use custom_title if provided, otherwise look up in metadata,
         if available.
-        Also populates composer and tune_type attrs when metadata is
+        Also populates composer, tune_type and source attrs when metadata is
         available.
 
         If custom_title is provided, metadata lookup is not performed and
-        composer/tune_type are not populated. This is based on our expected
-        use cases where custom titles are only used for occasional ad-hoc
-        processing of files without metadata.
+        composer/tune_type/source are not populated. This is based on our
+         expected use cases where custom titles are only used for occasional
+         ad-hoc processing of files without metadata.
 
         Note re: has_metadata flag:
             Optional flag. Indicates whether our input score has input metadata
@@ -248,6 +252,7 @@ class Score:
             # Custom-title mode: do not populate tune type or composer
             self.composer = None
             self.tune_type = None
+            self.source = None
             return candidate
 
         if has_metadata is False:
@@ -260,6 +265,7 @@ class Score:
             self.title = "untitled"
             self.composer = None
             self.tune_type = None
+            self.source = None
             return self.title
 
         # Use a single metadata row lookup to populate title, composer &
@@ -280,6 +286,7 @@ class Score:
             self.title = "untitled"
             self.composer = None
             self.tune_type = None
+            self.source = None
             return self.title
 
         # Populate self.title from federated_search_term
@@ -303,6 +310,9 @@ class Score:
         # Set composer
         composer = score_metadata.get("composer")
         self.composer = self._cleanup_metadata(composer)
+
+        # Set source
+        self.source = self._cleanup_metadata(score_metadata.get("source"))
 
         # Tune type: warn if missing in case there's an issue with input
         # metadata
@@ -731,7 +741,13 @@ class Score:
 
     @sync_to_s3
     def convert_score_to_abc(self, output_path=None):
-        """Reads xml file content as text and converts to ABC Notation"""
+        """
+        Reads xml file content as text and converts to ABC Notation.
+
+        - Write ABC notation as plain text ('.txt').
+        - Keep the output directory label as '_abc' (local + S3) so paths stay
+            stable and descriptive even though the file extension is '.txt'.
+        """
 
         #  Note: parsing multi-part XML scores to extract top line and write to
         #  ABC is beyond project scope as currently defined.
@@ -743,7 +759,10 @@ class Score:
         # a workaround. This also gives better performance than using Music21.
 
         if output_path is None:
-            output_path = self._get_output_path('.abc')
+            output_dir = (self.collection_root /
+                          f"{self.collection_root.name}_abc")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / self.score_path.with_suffix(".txt").name
         else:
             output_path = Path(output_path)
 
@@ -843,7 +862,8 @@ class Score:
                     suppress_header=False,
                     title=self.title,
                     composer=self.composer,
-                    poet=self.tune_type
+                    poet=self.tune_type,
+                    source=self.source
                 )
                 ly_path.write_text(ly_text, encoding="utf-8")
 

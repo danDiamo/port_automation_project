@@ -14,6 +14,7 @@ METADATA_FIELDS = (
     'explore_tag',  # Constant: content is always 'Port' string
     'collection_tag',  # Stores collection name tag, auto-derived from
     # collection root directory path
+    'source',   # stores collection name as defined in ITMA catalogue
     'key_signature',  # holds key detected via Score.detect_key.
     'mode',  # holds mode populated via Score.extract_mode_from_key_signature.
     'tonic', # holds mode populated via Score.extract_tonic_from_key_signature.
@@ -53,6 +54,7 @@ PRESERVE_FIELDS = {
     "slug",
     "alternative_title",
     "composer",
+    "source",
     "summary",
     "main_textbox",
     "score_track_title",

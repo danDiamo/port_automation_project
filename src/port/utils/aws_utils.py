@@ -11,7 +11,7 @@ import mimetypes
 
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
-from typing import List, Optional, Dict
+from typing import List, Optional
 
 # Securely load AWS credentials from .env file
 load_dotenv()

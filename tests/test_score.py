@@ -205,19 +205,27 @@ def test_convert_score_to_midi(tmp_path):
 
 def test_convert_score_to_abc(tmp_path):
     """Test converting MusicXML to ABC notation"""
-    default_score = Score(happy_testfile)
+    # Ensure we exercise the collection_root output policy:
+    #   <collection_root>/<collection_root>_abc/<filename>.txt
+    default_score = Score(happy_testfile, collection_root=tmp_path)
 
-    # Test XML-ABC conversion
-    abc_path = default_score.convert_score_to_abc()
+    # Run conversion. With collection_root set, @sync_to_s3 returns an S3 URI.
+    abc_uri = default_score.convert_score_to_abc()
+    assert isinstance(abc_uri, str)
+    assert abc_uri.startswith("s3://")
 
-    # Verify we got a Path back and the file exists
-    assert isinstance(abc_path, Path)
-    assert abc_path.exists()
-    assert abc_path.suffix == ".abc"
-    assert abc_path.stat().st_size > 0
+    # Verify the local file was also created.
+    local_abc_path = (
+        tmp_path
+        / f"{tmp_path.name}_abc"
+        / default_score.score_path.with_suffix(".txt").name
+    )
+    assert local_abc_path.exists()
+    assert local_abc_path.suffix == ".txt"
+    assert local_abc_path.stat().st_size > 0
 
     # Verify basic ABC structure (X: is the reference number, K: is the key)
-    abc_content = abc_path.read_text(encoding="utf-8")
+    abc_content = local_abc_path.read_text(encoding="utf-8")
     assert "X:" in abc_content
     assert "K:" in abc_content
 
@@ -227,10 +235,12 @@ def test_convert_score_to_pdf(tmp_path, default_score, monkeypatch):
 
     # Ensure title is populated
     default_score.title = "Unit Test Title"
+    # Ensure source is populated so the first-page footer textbox has content
+    default_score.source = "Example Collection Name"
 
     # Ensure footer file exists where convert_score_to_pdf expects it
     footer_path = (Path(score_module.__file__).parent / "assets" /
-                   "itma_pdf_footer.pdf")
+                   "itma_footer.pdf")
 
     # Define an output path in the temp directory
     output_pdf = tmp_path / "test_output.pdf"
@@ -238,14 +248,40 @@ def test_convert_score_to_pdf(tmp_path, default_score, monkeypatch):
     # Fake LilyPond check
     monkeypatch.setattr(score_module, "check_lilypond", lambda: True)
 
+    # Spy on LilyPond sanitization output to verify:
+    # - Arial header font override
+    # - first-page footer textbox markup
+    # - Arial is enforced for both
+    from port.utils import pdf_utils as pdf_utils_module
+    _real_cleanup = pdf_utils_module.cleanup_lilypond_formatting
+
+    def _spy_cleanup_lilypond_formatting(ly_text: str, **kwargs) -> str:
+        sanitized = _real_cleanup(ly_text, **kwargs)
+
+        assert "PORT_HEADER_FONT_ARIAL" in sanitized
+        assert "PORT_FIRST_PAGE_SOURCE_FOOTER" in sanitized
+
+        # Confirm Arial is explicitly set in our LilyPond markup.
+        assert '(font-name . "Arial")' in sanitized
+
+        # Confirm the first-page-only footer content is present.
+        assert r"\on-the-fly #first-page" in sanitized
+
+        return sanitized
+
+    monkeypatch.setattr(
+        score_module,
+        "cleanup_lilypond_formatting",
+        _spy_cleanup_lilypond_formatting,
+    )
+
     def _fake_cli_run(cmd, check, capture_output, text=None, shell=False):
         # cmd is a list like ["musicxml2ly", "-o", "<ly_path>", "<xml_path>"]
         if isinstance(cmd, list) and cmd and cmd[0] == "musicxml2ly":
             out_idx = cmd.index("-o") + 1
             ly_path = Path(cmd[out_idx])
 
-            # Create a minimal .ly file that includes subtitle/piece noise we
-            # want removed.
+            # Create a minimal .ly file that includes noise we want removed.
             ly_path.write_text(
                 r"""
 \version "2.24.0"
@@ -498,11 +534,11 @@ def test_abc_conversion_syncs_to_s3(tmp_path, default_score):
     abc_uri = default_score.convert_score_to_abc()
 
     # Local output path convention is:
-    # {collection_root.name}_abc/<filename>.abc
+    # {collection_root.name}_abc/<filename>.txt
     expected_key = (
         f"{default_score.collection_root.name}/"
         f"{default_score.collection_root.name}_abc/"
-        f"{default_score.score_path.with_suffix('.abc').name}"
+        f"{default_score.score_path.with_suffix('.txt').name}"
     )
 
     assert abc_uri == f"s3://port.itma.ie/{expected_key}"
