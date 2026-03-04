@@ -17,7 +17,7 @@ Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these t
 
 2. Move the *entire* Port/ folder to user Applications directory (recommended):
 
-   mkdir -p "$HOME/Applications" (create Applications directory if doesn't exist already')
+   mkdir -p "$HOME/Applications" (create Applications directory if doesn't exist already)
    mv "/path/to/Port" "$HOME/Applications/Port" (move Port folder to Applications)
 
    IMPORTANT: Do not move only the `port` executable out of the Port/ folder.
@@ -116,7 +116,7 @@ B) Prompt via CLI (more secure; less convenient)
 
 Port requires the user to provide the path to a collection root directory to run. The user can also provide an optional metadata CSV file.
 
-If you don't have a MetadataCSV, simply omit the `--metadata-csv` option and Port will generate one from scratch.
+If you don't have a metadata CSV, simply omit the `--metadata-csv` option and Port will generate one from scratch.
 
 If you provide a metadata CSV, it must be stored inside the collection root directory. It should be named per <collection_root>_metadata.csv (i.e. for a collection root named test_collection, the CSV file should be named test_collection_metadata.csv).
 
@@ -260,7 +260,7 @@ Metadata I/O:
   --metadata-csv <PATH>
       Optional input metadata CSV path (must be stored inside collection root directory).
 
-  By default, whether metadata is provided or not, Port will generate a new metadata CSV named per <collection_root>_processed.csv. If a metadata CSV is provided, it will have new columns and content added to record the various outputs and derivatives created by Port. If a metadata CSV is not provided, Port will generate one from scratch and record the same output columns & content.
+  	  By default, whether metadata is provided or not, Port will generate a new metadata CSV named per <collection_root>_processed.csv. If a metadata CSV is provided, it will have new columns and content added to record the various outputs and derivatives created by Port. If a metadata CSV is not provided, Port will generate one from scratch and record the same output columns & content.
 
   --no-save
       Run processing but do not write any output CSV (useful for development/testing).
@@ -283,7 +283,7 @@ Select specific analysis method(s):
       number_of_parts: calculate number of parts in the score
       bb_code: generate Breathnach code from incipit
 
-Select specific derivative method(s) (repeatable):
+Select specific derivative method(s):
   --derivative-method <pdf_download|featured_image|midi_audio_full|incipit_audio|abc_notation>
 
        Run only the selected derivative method chosen from the options listed above. If no derivative-method is provided, all derivative methods run.
@@ -331,7 +331,7 @@ Port reads and writes metadata CSV files using a strict schema. Input CSVs:
 Field categories:
 - PRESERVE: Port will not overwrite these fields if they already exist in the metadata table.
 - OVERWRITE: Port may write/update these fields during processing.
-- CONSTANT: Port always writes a fixed constant value to this field (as part of overwrite rules).
+- CONSTANT: Port always writes a fixed constant value to this field.
 
 Fields (in output order):
 
