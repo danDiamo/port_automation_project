@@ -247,6 +247,19 @@ class ScoreProcessor:
         {itma_id: {field: value}}
     """
 
+    @staticmethod
+    def _set_if_not_none(out: dict[str, Any], field: str, value: Any) -> None:
+        """
+        Only write a field into the metadata patch if the value is not None.
+
+        This prevents partial/single-step Port processing runs from
+        overwriting previously populated metadata fields with None when a
+        processing step fails or is skipped.
+        """
+        if value is None:
+            return
+        out[field] = value
+
     def process_single_score(
         self,
         *,
@@ -370,22 +383,27 @@ class ScoreProcessor:
         out: dict[str, Any] = {}
 
         if select("key_signature"):
-            out["key_signature"] = score.detect_key()
+            self._set_if_not_none(out, "key_signature", score.detect_key())
 
         if select("mode"):
-            out["mode"] = score.extract_mode_from_key_signature()
+            self._set_if_not_none(out, "mode",
+                                  score.extract_mode_from_key_signature())
 
         if select("tonic"):
-            out["tonic"] = score.extract_tonic_from_key_signature()
+            self._set_if_not_none(out, "tonic",
+                                  score.extract_tonic_from_key_signature())
 
         if select("time_signature"):
-            out["time_signature"] = score.extract_time_signature()
+            self._set_if_not_none(out, "time_signature",
+                                  score.extract_time_signature())
 
         if select("number_of_parts"):
-            out["number_of_parts"] = score.count_number_of_parts()
+            self._set_if_not_none(out, "number_of_parts",
+                                  score.count_number_of_parts())
 
         if select("bb_code"):
-            out["bb_code"] = score.create_breathnach_codes()
+            self._set_if_not_none(out, "bb_code",
+                                  score.create_breathnach_codes())
 
         return out
 
@@ -404,19 +422,24 @@ class ScoreProcessor:
         out: dict[str, Any] = {}
 
         if select("pdf_download"):
-            out["pdf_download"] = score.convert_score_to_pdf()
+            self._set_if_not_none(out, "pdf_download",
+                                  score.convert_score_to_pdf())
 
         if select("featured_image"):
-            out["featured_image"] = score.convert_incipit_to_svg()
+            self._set_if_not_none(out, "featured_image",
+                                  score.convert_incipit_to_svg())
 
         if select("midi_audio_full"):
-            out["midi_audio_full"] = score.convert_score_to_midi()
+            self._set_if_not_none(out, "midi_audio_full",
+                                  score.convert_score_to_midi())
 
         if select("incipit_audio"):
-            out["incipit_audio"] = score.convert_incipit_to_mp3()
+            self._set_if_not_none(out, "incipit_audio",
+                                  score.convert_incipit_to_mp3())
 
         if select("abc_notation"):
-            out["abc_notation"] = score.convert_score_to_abc()
+            self._set_if_not_none(out, "abc_notation",
+                                  score.convert_score_to_abc())
 
         return out
 

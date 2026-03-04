@@ -190,7 +190,8 @@ def copy_mp3_to_aws(
             file_path=str(mp3_path),
             root_dir=str(collection_root)
         )
-        return f"s3://{bucket_name}/{object_key}"
+        region = (os.getenv("AWS_DEFAULT_REGION") or "").strip() or "eu-west-1"
+        return f"https://s3.{region}.amazonaws.com/{bucket_name}/{object_key}"
     except Exception as e:
         warnings.warn(
             f"Failed to copy MP3 to AWS ({mp3_path}). "

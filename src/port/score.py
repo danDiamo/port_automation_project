@@ -70,7 +70,11 @@ def sync_to_s3(func):
                 )
                 object_key = filepath.relative_to(s3_root).as_posix()
                 # return AWS filepath as str
-                return f"s3://{bucket_name}/{object_key}"
+                region = (os.getenv(
+                    "AWS_DEFAULT_REGION") or "").strip() or "eu-west-1"
+                url = (f"https://s3.{region}.amazonaws.com/"
+                       f"{bucket_name}/{object_key}")
+                return url
 
             except Exception as e:
                 warnings.warn(f"S3 Sync failed for {filepath}: {e}")
@@ -687,6 +691,12 @@ class Score:
         # format output as a string & force max length of 8 scale degree values
         breathnach_code = "".join(accented_notes[:8])
 
+        # Normalize empty string output to None so we never "blank out" an
+        # existing bb_code value with an empty string during
+        # partial processing runs.
+        if not breathnach_code:
+            return None
+
         return breathnach_code
 
     @_load_score_content
@@ -883,8 +893,8 @@ class Score:
                     ly_text,
                     suppress_header=False,
                     title=self.title,
-                    composer=self.composer,
-                    poet=self.tune_type,
+                    composer=self.tune_type,  # swapped: was self.composer
+                    poet=self.composer,  # swapped: was self.tune_type
                     source=self.source
                 )
                 ly_path.write_text(ly_text, encoding="utf-8")
@@ -1272,18 +1282,40 @@ class Score:
             )
             return None
 
-        # try to resolve score title
-        if not self.title:
-            if collection_metadata is not None:
-                self.set_metadata(
-                    collection_metadata=collection_metadata,
-                    itma_id=itma_id
-                )
-            else:
-                # fall back if no metadata available
-                self.title = "untitled"
+        # Resolve Soundslice display title:
+        # prioritises metadata title field, then score title (i.e. metadata
+        # federated_search_term), then untitled
+        soundslice_title: str | None = None
 
-        score_name = str(title or self.title or "").strip() or "untitled"
+        if title is not None:
+            soundslice_title = str(title).strip() or None
+        else:
+            if collection_metadata is not None:
+                try:
+                    row = self._get_score_metadata(
+                        collection_metadata=collection_metadata,
+                        itma_id=itma_id,
+                    ) or {}
+                    soundslice_title = self._cleanup_metadata(
+                        row.get("title"))
+                except Exception:
+                    # None title will ultimately be auto-replaced by 'untitled'
+                    soundslice_title = None
+
+            if soundslice_title is None:
+                # Ensure self.title is set
+                if not self.title:
+                    if collection_metadata is not None:
+                        self.set_metadata(
+                            collection_metadata=collection_metadata,
+                            itma_id=itma_id,
+                        )
+                    else:
+                        self.title = "untitled"
+
+                soundslice_title = str(self.title or "").strip() or None
+
+        score_name = soundslice_title or "untitled"
 
         if not self.collection_root:
             warnings.warn(

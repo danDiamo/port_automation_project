@@ -419,7 +419,10 @@ def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
     class FakeCollectionMetadata:
         def get_score_metadata(self, itma_id: str) -> dict:
             assert itma_id == "unit-slug"
-            return {"federated_search_term": "Unit Test Title"}
+            return {
+                "title": "Unit Test Title (Catalogue)",
+                "federated_search_term": "Unit Test Title (Federated)",
+            }
 
     class FakeConstants:
         # Mocks Soundslice constants
@@ -450,12 +453,14 @@ def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
 
         def list_folders(self):
             raise AssertionError(
-                "list_folders() should not be called when _folder_id is provided"
+                "list_folders() should not be called when _folder_id is "
+                "provided"
             )
 
         def create_folder(self, name: str):
             raise AssertionError(
-                "create_folder() should not be called when _folder_id is provided"
+                "create_folder() should not be called when _folder_id is "
+                "provided"
             )
 
     # use pytest's built-in mocking
@@ -484,7 +489,7 @@ def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
     assert len(calls["upload"]) == 1
 
     kwargs = calls["create_slice"][0]
-    assert kwargs["name"] == "Unit Test Title"
+    assert kwargs["name"] == "Unit Test Title (Catalogue)"
     assert kwargs["artist"] == ""  # intentionally left blank
     assert kwargs["folder_id"] == 123
     assert kwargs["has_shareable_url"] is True
@@ -538,7 +543,7 @@ def test_abc_conversion_syncs_to_s3(tmp_path, default_score):
     # Update default_score to have a collection_root
     default_score.collection_root = default_score.score_path.parent
 
-    # Run conversion (should return S3 URI when collection_root is set)
+    # Run conversion (should return S3 URL when collection_root is set)
     abc_uri = default_score.convert_score_to_abc()
 
     # Local output path convention is:
@@ -549,7 +554,8 @@ def test_abc_conversion_syncs_to_s3(tmp_path, default_score):
         f"{default_score.score_path.with_suffix('.txt').name}"
     )
 
-    assert abc_uri == f"s3://port.itma.ie/{expected_key}"
+    assert (abc_uri ==
+            f"https://s3.eu-west-1.amazonaws.com/port.itma.ie/{expected_key}")
     assert check_s3_file_exists("port.itma.ie", expected_key) is True
 
 
@@ -587,7 +593,8 @@ def test_sync_to_s3_with_organization(tmp_path):
     # check S3 mirroring matches the local relative dir structure
     expected_key = \
         f"Danny_Collection/Danny_Collection_svg/{expected_local_svg.name}"
-    assert incipit_svg_uri == f"s3://{bucket_name}/{expected_key}"
+    assert (incipit_svg_uri ==
+            f"https://s3.eu-west-1.amazonaws.com/{bucket_name}/{expected_key}")
     assert check_s3_file_exists(bucket_name, expected_key) is True
 
 

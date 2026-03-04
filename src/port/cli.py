@@ -335,15 +335,16 @@ def _prompt_aws_credentials() -> None:
     """
     Prompt for AWS credentials and store them in environment variables.
     boto3 reads these standard environment variables automatically.
+
+    Note:
+        AWS Region is intentionally omitted from prompts as it is hard-coded
+        to 'eu-west-1'.
     """
     access_key = input("AWS access key id: ").strip()
     secret_key = getpass("AWS secret access key: ").strip()
-    region = input("AWS region (blank for default): ").strip()
 
     os.environ["AWS_ACCESS_KEY_ID"] = access_key
     os.environ["AWS_SECRET_ACCESS_KEY"] = secret_key
-    if region:
-        os.environ["AWS_DEFAULT_REGION"] = region
 
 
 def _load_dotenv_from_executable_dir() -> None:

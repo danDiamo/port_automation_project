@@ -381,6 +381,28 @@ def cleanup_lilypond_formatting(
             count=1,
         )
 
+    # Encourage LilyPond to leave more space at the bottom of the final
+    # page (will apply to first/only page for single-page PDFs)
+    # so the music system content doesn't collide with our reserved footer area
+    # or with the appended source information textfield.
+    if (not suppress_header) and (
+            "PORT_LAST_BOTTOM_SPACING" not in ly_text):
+        last_bottom_spacing = r"""
+  % PORT_LAST_BOTTOM_SPACING
+  % Keep extra vertical space between the last system and the bottom of the page.
+  % This encourages earlier page breaks when the last page is tight.
+  last-bottom-spacing = #'((basic-distance . 14)
+                          (minimum-distance . 14)
+                          (padding . 2)
+                          (stretchability . 0))
+""".rstrip()
+        ly_text = re.sub(
+            r"(?s)(\\paper\s*\{)",
+            lambda m: f"{m.group(1)}\n{last_bottom_spacing}\n",
+            ly_text,
+            count=1,
+        )
+
     # Apply Arial font to PDF header text.
     ly_text = _set_pdf_header_font(ly_text)
 

@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Port installer (macOS)
 # - Creates ~/.local/bin/port -> <this Port folder>/port
+# - Removes macOS quarantine attribute recursively
+# (prevents manual user management of macOS “permission” / Gatekeeper issues)
+# - Normalizes permissions recursively
+# (ensures bundled runtime files are readable)
 # - Optionally adds ~/.local/bin to PATH (with prompt)
 #
 # Usage:
@@ -23,6 +27,21 @@ BIN_DIR="${HOME}/.local/bin"
 LINK_PATH="${BIN_DIR}/port"
 
 [[ -f "$PORT_EXE" ]] || die "Expected executable not found: ${PORT_EXE}"
+
+# --- Fix common macOS “manual permissions per dependency” issues ---
+# 1) Clear macOS quarantine recursively
+# 2) Check that folders and files are readable (& execute where needed)
+#
+# This runs without prompting; it’s part of the explicit user install action.
+if command -v xattr >/dev/null 2>&1; then
+  # Ignore failures: if attributes aren’t present, xattr exits non-zero.
+  xattr -dr com.apple.quarantine "$SCRIPT_DIR" 2>/dev/null || true
+fi
+
+# Ensure:
+# - user can read/write, and execute directories (and any already-executable files)
+# - others can read, and traverse directories
+chmod -R u+rwX,go+rX "$SCRIPT_DIR" 2>/dev/null || true
 
 mkdir -p "$BIN_DIR"
 chmod +x "$PORT_EXE" || true

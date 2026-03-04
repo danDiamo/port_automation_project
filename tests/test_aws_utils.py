@@ -131,7 +131,7 @@ def test_copy_mp3_to_aws_happy_path_with_root_dir_mirroring(tmp_path):
     uri = copy_mp3_to_aws(str(local_mp3), collection_root=str(collection_root))
 
     expected_key = "MyCollection_mp3/track.mp3"
-    assert uri == f"s3://port.itma.ie/{expected_key}"
+    assert uri == f"https://s3.eu-west-1.amazonaws.com/port.itma.ie/{expected_key}"
     assert check_s3_file_exists("port.itma.ie", expected_key) is True
 
 
