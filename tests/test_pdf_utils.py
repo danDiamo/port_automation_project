@@ -126,3 +126,95 @@ def test_build_export_score_preserves_structural_barlines_and_voltas():
     assert getattr(export_volta, "number", None) in ([1], "1")
     spanned = list(export_volta.getSpannedElements())
     assert len(spanned) == 1
+
+
+def test_build_export_score_preserves_opening_and_closing_repeat_barlines():
+    """
+    Ensure opening (start) and closing (end) repeat markers survive export
+    normalization.
+
+    Important:
+        In music21, repeat barlines may have .type values like 'heavy-light' or
+        'light-heavy'. We therefore assert that the barline is a bar.Repeat and
+        that direction/times are preserved.
+    """
+    score = stream.Score()
+    part = stream.Part()
+    part.insert(0.0, meter.TimeSignature("4/4"))
+
+    bar_1 = _make_bar(1, [1.0, 1.0, 1.0, 1.0])
+    bar_1.leftBarline = bar.Repeat()
+    bar_1.leftBarline.direction = "start"
+
+    bar_2 = _make_bar(2, [1.0, 1.0, 1.0, 1.0])
+    bar_2.rightBarline = bar.Repeat()
+    bar_2.rightBarline.direction = "end"
+    bar_2.rightBarline.times = 2
+
+    part.append(bar_1)
+    part.append(bar_2)
+    score.insert(0.0, part)
+
+    export = build_export_score_for_lilypond(
+        score_stream=score,
+        default_time_sig_str="4/4",
+        score_label="unit-test-repeat-barlines",
+    )
+
+    export_part = list(export.parts)[0]
+    export_bars = list(export_part.getElementsByClass(stream.Measure))
+    assert len(export_bars) == 2
+
+    left = export_bars[0].leftBarline
+    assert isinstance(left, bar.Repeat)
+    assert getattr(left, "direction", None) == "start"
+
+    right = export_bars[1].rightBarline
+    assert isinstance(right, bar.Repeat)
+    assert getattr(right, "direction", None) == "end"
+    assert getattr(right, "times", None) == 2
+
+
+def test_build_export_score_preserves_embedded_measure_repeat_markers():
+    """
+    Ensure opening/closing repeats are preserved even when repeat objects are
+    stored as elements inside a Measure, not as
+    Measure.leftBarline/rightBarline.
+    """
+    score = stream.Score()
+    part = stream.Part()
+    part.insert(0.0, meter.TimeSignature("4/4"))
+
+    bar_1 = _make_bar(1, [1.0, 1.0, 1.0, 1.0])
+    rep_start = bar.Repeat()
+    rep_start.direction = "start"
+    bar_1.append(rep_start)
+
+    bar_2 = _make_bar(2, [1.0, 1.0, 1.0, 1.0])
+    rep_end = bar.Repeat()
+    rep_end.direction = "end"
+    rep_end.times = 2
+    bar_2.append(rep_end)
+
+    part.append(bar_1)
+    part.append(bar_2)
+    score.insert(0.0, part)
+
+    export = build_export_score_for_lilypond(
+        score_stream=score,
+        default_time_sig_str="4/4",
+        score_label="unit-test-embedded-repeat-barlines",
+    )
+
+    export_part = list(export.parts)[0]
+    export_bars = list(export_part.getElementsByClass(stream.Measure))
+    assert len(export_bars) == 2
+
+    left = export_bars[0].leftBarline
+    assert isinstance(left, bar.Repeat)
+    assert getattr(left, "direction", None) == "start"
+
+    right = export_bars[1].rightBarline
+    assert isinstance(right, bar.Repeat)
+    assert getattr(right, "direction", None) == "end"
+    assert getattr(right, "times", None) == 2

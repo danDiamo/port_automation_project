@@ -1,5 +1,5 @@
 """
-scripts/port_doctor.py
+scripts/doctor.py
 
 This script helps users verify
 their environment before running long processing jobs.
@@ -35,7 +35,10 @@ class CheckResult:
 
 def _run_version(cmd: list[str]) -> str | None:
     """
-    Run a version command and return a PYTHONPATH=/path/to/port_automation_project/src python -m port --help string if available.
+    Run a version command and return a
+    PYTHONPATH=/path/to/port_automation_project/src python -m port --help
+    string if available.
+
     Returns None on failure.
     """
     try:

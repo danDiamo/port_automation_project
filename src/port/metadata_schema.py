@@ -29,11 +29,13 @@ METADATA_FIELDS = (
     'main_textbox',  # provided by ITMA
     'soundslice_iframe',  # holds Soundslice scorehash
     'score_track_title',  # Provided by ITMA
-    'score_track_mp3',  # Holds AWS path to performance mp3 file, if provided.
+    'score_track_mp3',  # Holds AWS path to performance mp3 file, if provided. Note:
+    # file should be named per: <ITMA id>_performance.mp3
     'score_track_rights',  # Constant: Content is always 'In Copyright' string
     'score_track_catalog_url',  # Provided by ITMA, online catalogue link
     'score_track2_title',  # Provided by ITMA (slow recording title field)
-    'score_track2_mp3',  # Holds AWS path to slow recording mp3 file
+    'score_track2_mp3',  # Holds AWS path to slow recording mp3 file. Note:
+    # file should be named per: <ITMA id>_slow.mp3
     'score_track2_rights',  # Constant: Content is always 'In Copyright' string
     'score_track2_catalog_url',  # Provided by ITMA, online catalogue link
     'video_url',  # Provided by ITMA, Youtube embed code
@@ -52,6 +54,8 @@ METADATA_FIELDS = (
 PRESERVE_FIELDS = {
     # we do not edit or overwrite content in these fields
     "slug",
+    "title",
+    "federated_search_term",
     "alternative_title",
     "composer",
     "source",
@@ -75,9 +79,6 @@ OVERWRITE_FIELDS = {
     "explore_tag",
     "score_track_rights",
     "score_track2_rights",
-    # editable but only under strictly-enforced conditions (only if empty)
-    "title",
-    "federated_search_term",
     # pipeline-generated assets / embeds
     "featured_image",
     "pdf_download",

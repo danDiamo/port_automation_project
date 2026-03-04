@@ -33,7 +33,7 @@ from .utils.pdf_utils import (
 )
 from .utils.soundslice_utils import get_soundslice_credentials_from_env
 
-# Load .env to access API credentials
+# Load .env.template to access API credentials
 load_dotenv()
 
 
@@ -177,6 +177,27 @@ class Score:
 
         return output_dir / self.score_path.with_suffix(extension).name
 
+    def _get_incipit_mp3_output_path(self) -> Path:
+        """
+        Build the default output path for a generated incipit MP3.
+
+        - If collection_root is set, write to:
+        <collection_root>/<collection_root.name>_incipit_mp3/<stem>_incipit.mp3
+        - Otherwise, write next to the source score file as:
+        <score_dir>/<stem>_incipit.mp3
+        """
+        stem = str(self.score_path.stem or "").strip() or "untitled"
+        filename = f"{stem}_incipit.mp3"
+
+        if not self.collection_root:
+            return self.score_path.with_name(filename)
+
+        output_dir = (
+                self.collection_root / f"{self.collection_root.name}_incipit_mp3"
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir / filename
+
     def _read_content_to_music21_stream(self):
         """
         Reads content from MusicXML file into a music21 Stream object
@@ -274,20 +295,6 @@ class Score:
             collection_metadata=collection_metadata,
             itma_id=itma_id,
         )
-
-        # if we don't have metadata
-        if score_metadata is None:
-            itma_id = (itma_id or self.score_path.stem or "").strip()
-            warnings.warn(
-                f"No metadata lookup is available for score {itma_id!r}; "
-                "Setting title = 'untitled'.",
-                UserWarning,
-            )
-            self.title = "untitled"
-            self.composer = None
-            self.tune_type = None
-            self.source = None
-            return self.title
 
         # Populate self.title from federated_search_term
         title = (
@@ -469,9 +476,10 @@ class Score:
         #  check score is not empty
         if not content:
             raise ValueError(
-                "Cannot extract incipit: either this score is empty or it is "
-                "not loading correctly."
+                f"Cannot extract incipit for score {self.score_path.name}: "
+                f"either this score is empty or it is not loading correctly."
             )
+
         # return first 4 bars of top melody line
         topline = content.parts[0]
 
@@ -501,7 +509,10 @@ class Score:
             topline.recurse().getElementsByClass(music21.stream.Measure))
         if not all_bars:
             raise ValueError(
-                "Cannot extract incipit: top part contains no measures.")
+                f"Cannot extract incipit for score {self.score_path.name}: "
+                f"top part contains no measures. "
+                f"Please inspect score and re-run."
+            )
 
         start_idx = 1 if _is_incomplete_bar(all_bars[0]) else 0
         selected_bars = all_bars[start_idx:start_idx + 4]
@@ -617,7 +628,9 @@ class Score:
 
         if key_sig is None:
             raise ValueError(
-                f"Cannot extract key signature for {self.score_path.name}"
+                f"Cannot extract key signature for score"
+                f" {self.score_path.name}. Please inspect input score and "
+                f"re-run."
             )
 
         # Ensure we have a Key object (which can store mode info) rather than
@@ -723,9 +736,14 @@ class Score:
         try:
             return self._write_midi(out_path=out_path, stream=stream)
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to write MIDI for {self.score_path.name}. Error: {e}"
-            ) from e
+            warnings.warn(
+                f"Unable to write MIDI for score {self.score_path.name} due "
+                "to structural issues/incompatibilities. "
+                "Skipping this processing step. "
+                "Please inspect score and re-run."
+                f"\n{e}",
+                UserWarning,
+            )
 
     def _write_midi(self, *, out_path: str | Path, stream=None) -> Path:
         """
@@ -793,10 +811,14 @@ class Score:
 
         except Exception as e:
             # preserve the original error from convert_xml2abc
-            raise RuntimeError(
-                f"Failed to convert {self.score_path.name} to ABC notation. "
-                f"Internal Error: {e}"
-            ) from e
+            warnings.warn(
+                f"Unable to create ABC Notation for score"
+                f" {self.score_path.name}. "
+                "Skipping this processing step. "
+                "Please inspect score and re-run."
+                f"\n{e}",
+                UserWarning,
+            )
 
     @sync_to_s3
     @_load_score_content
@@ -897,14 +919,25 @@ class Score:
 
             return output_path
 
+
         except subprocess.CalledProcessError as e:
             # Cleanup even if it fails
             if ly_path.exists():
                 os.remove(ly_path)
-            raise RuntimeError(
-                f"PDF Conversion failed for {self.score_path.name}. "
-                f"Stderr: {e.stderr}"
-            ) from e
+
+            stderr = e.stderr
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+
+            warnings.warn(
+                f"PDF conversion failed for score {self.score_path.name}. "
+                "Skipping this processing step. "
+                "Please inspect score and re-run."
+                f"LilyPond/musicxml2ly error output:\n{stderr}",
+                UserWarning,
+            )
+            return None
+
         finally:
             if temp_xml.exists():
                 os.remove(temp_xml)
@@ -1010,12 +1043,22 @@ class Score:
 
             return output_path
 
+
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"SVG Conversion failed for incipit of "
-                f"{self.score_path.name}. "
-                f"Stderr: {e.stderr}"
-            ) from e
+
+            stderr = e.stderr
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            warnings.warn(
+
+                f"Failed to generate incipit SVG for score"
+                f" {self.score_path.name}. "
+                "Skipping this processing step. "
+                "Please inspect score and re-run."
+                f"\nLilyPond/musicxml2ly error output:\n{stderr}",
+                UserWarning,
+            )
+            return None
         finally:
             # Clean up all temp files
             for p in [temp_xml, ly_path]:
@@ -1054,7 +1097,7 @@ class Score:
             self.extract_incipit()
 
         if output_path is None:
-            output_path = self._get_output_path('.mp3')
+            output_path = self._get_incipit_mp3_output_path()
         else:
             output_path = Path(output_path)
 
@@ -1086,8 +1129,13 @@ class Score:
             )
 
             if not temp_wav.exists():
-                raise RuntimeError(
-                    "FluidSynth failed to create temporary WAV file.")
+                warnings.warn(
+                    f"MP3 conversion failed for {self.score_path.name}: "
+                    "Skipping this processing step. "
+                    "Please inspect score and re-run.",
+                    UserWarning,
+                )
+                return None
 
             # Convert WAV to MP3 via FFmpeg
             ffmpeg_cmd = [
@@ -1107,11 +1155,21 @@ class Score:
 
             return output_path
 
+
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"MP3 Conversion failed for {self.score_path.name}. "
-                f"Stderr: {e.stderr.decode() if e.stderr else 'Unknown error'}"
-            ) from e
+            stderr = e.stderr
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+
+            warnings.warn(
+                f"MP3 conversion failed for {self.score_path.name}. "
+                "Skipping this processing step. "
+                "Please inspect score and re-run."
+                f"\nError output:\n{stderr if stderr else 'Unknown error'}",
+                UserWarning,
+            )
+            return None
+
         finally:
             # Cleanup all intermediate files
             for p in [temp_midi, temp_wav]:
@@ -1150,7 +1208,7 @@ class Score:
 
         return soundfont_path
 
-    def copy_musicxml_file_to_aws(self, collection_root: Path) -> str:
+    def copy_musicxml_file_to_aws(self, collection_root: Path) -> str | None:
         """
         Uploads the MusicXML score to the 'port.itma.ie' S3 bucket,
         preserving the local directory structure relative to the collection
@@ -1176,10 +1234,15 @@ class Score:
             # return s3 path
             return f"s3://{bucket_name}/{object_key}"
 
+
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to copy {self.score_path.name} to AWS: {e}"
-            ) from e
+            warnings.warn(
+                f"Failed to copy {self.score_path.name} to AWS. "
+                "Skipping this processing step. "
+                f"Error: {e}",
+                UserWarning,
+            )
+            return None
 
     def create_soundslice_slice(
             self,
@@ -1188,10 +1251,13 @@ class Score:
             itma_id: str,
             title: str | None = None,
             _folder_id: int | None = None,
-    ) -> str:
+    ) -> str | None:
         """
         Create a slice in the collection's Soundslice folder, adds MusicXML,
-         and return the Soundslice embed URL string.
+        and return the Soundslice embed URL string.
+
+        Returns:
+            embed_id (scorehash) as a string, or None if creation/upload fails.
 
         If _folder_id is provided, no list_folders() calls are made to the
         Soundslice API (safe for parallel processing).
@@ -1200,7 +1266,12 @@ class Score:
         # validate score id
         itma_id = str(itma_id).strip()
         if not itma_id:
-            raise ValueError("ITMA id must be a non-empty string.")
+            warnings.warn(
+                "Soundslice slice creation skipped: ITMA id is blank/empty.",
+                UserWarning,
+            )
+            return None
+
         # try to resolve score title
         if not self.title:
             if collection_metadata is not None:
@@ -1215,8 +1286,12 @@ class Score:
         score_name = str(title or self.title or "").strip() or "untitled"
 
         if not self.collection_root:
-            raise RuntimeError(
-                "Collection root directory must be set to proceed.")
+            warnings.warn(
+                f"Soundslice slice creation skipped for {self.score_path.name}: "
+                "collection_root is not set.",
+                UserWarning,
+            )
+            return None
 
         folder_name = self.collection_root.name
         application_id, password = get_soundslice_credentials_from_env()
@@ -1255,18 +1330,23 @@ class Score:
                         )
                     )
                     if not race_ok:
-                        raise RuntimeError(
-                            f"Failed to create Soundslice folder"
-                            f" '{folder_name}': {e}"
-                        ) from e
+                        warnings.warn(
+                            f"Failed to create Soundslice folder '{folder_name}'. "
+                            "Skipping this processing step. "
+                            f"Error: {e}",
+                            UserWarning,
+                        )
+                        return None
 
                 folder_id = _find_folder_id()
 
             if folder_id is None:
-                raise RuntimeError(
-                    f"Failed to resolve Soundslice folder id for "
-                    f"'{folder_name}'."
+                warnings.warn(
+                    f"Failed to resolve Soundslice folder id for '{folder_name}'. "
+                    "Skipping this processing step.",
+                    UserWarning,
                 )
+                return None
 
             self._soundslice_folder_id_cache[folder_name] = folder_id
 
@@ -1289,12 +1369,21 @@ class Score:
             # get Soundslice 'scorehash' (embed id code)
             embed_id = new_slice.get("scorehash")
             if not embed_id:
-                raise RuntimeError("Soundslice API did not return scorehash.")
+                warnings.warn(
+                    "Soundslice API did not return scorehash. "
+                    "Skipping this processing step.",
+                    UserWarning,
+                )
+                return None
 
             return embed_id
 
         except Exception as e:
-            raise RuntimeError(
+            warnings.warn(
                 f"Failed to create Soundslice slice for "
-                f"{self.score_path.name}: {e}"
-            ) from e
+                f"{self.score_path.name}. "
+                "Skipping this processing step. "
+                f"Error: {e}",
+                UserWarning,
+            )
+            return None

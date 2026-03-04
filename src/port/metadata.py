@@ -350,8 +350,9 @@ class CollectionMetadata:
         if bool(invalid_mask.any()):
             bad_rows = df.index[invalid_mask].tolist()[:10]
             raise ValueError(
-                "Metadata 'slug' column contains blank/invalid ITMA id "
-                f"value(s). Sample row indices: {bad_rows}"
+                "Input metadata CSV contains blank/invalid 'slug' (ITMA id) "
+                "values. Please fill these values and re-run.\n"
+                f"Sample DataFrame row indices: {bad_rows}\n"
             )
         # detect duplicates
         dup_mask = slug_series.duplicated(keep=False)

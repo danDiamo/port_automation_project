@@ -11,6 +11,7 @@ set -euo pipefail
 #   Port/
 #     port            (executable)
 #     README.txt
+#     install.sh
 #     ...             (PyInstaller one-folder runtime files)
 #
 # Requirements:
@@ -25,14 +26,27 @@ APP_FOLDER_NAME="Port"
 EXE_NAME="port"
 
 README_SRC="release/README.txt"
+INSTALLER_SRC="release/install.sh"
+ENV_TEMPLATE_SRC="release/.env.template"
 
 WORK_DIR="release_build"
 OUT_DIR="release_out"
 
+# Prefer an explicit Apple Silicon Homebrew Python for all preflight checks.
+# This prevents pyenv shims / Intel Homebrew Python from causing x86_64 detection.
+PYTHON_BIN="${PYTHON_BIN:-/opt/homebrew/opt/python@3.13/bin/python3.13}"
+
+# Resolve repo root (so relative paths work regardless of where script is run from)
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+ASSET_SOUNDFONT="${REPO_ROOT}/src/port/assets/GeneralUser-GS.sf2"
+ASSET_PDF_FOOTER="${REPO_ROOT}/src/port/assets/itma_footer.pdf"
+
+
 # ---- Helpers ----
 
 project_version() {
-  python - <<'PY'
+  "${PYTHON_BIN}" - <<'PY'
 import tomllib
 from pathlib import Path
 data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
@@ -41,7 +55,7 @@ PY
 }
 
 machine_arch() {
-  python - <<'PY'
+  "${PYTHON_BIN}" - <<'PY'
 import platform
 print(platform.machine())
 PY
@@ -82,13 +96,19 @@ uv sync --extra dev
 
 # ---- Build (one-folder) ----
 # Note:
-# - Entry point is the wrapper that adds preflight + derivative auto-selection.
-# - You can add a .spec later if you need to collect package metadata explicitly
-#   for `port --version` (recommended if you hit PackageNotFoundError).
+# - Entry point is the wrapper that adds preflight + derivative auto-selection (defaulting to 'run').
+
+[[ -f "${ASSET_SOUNDFONT}" ]] || die "Missing asset in repo: ${ASSET_SOUNDFONT}"
+[[ -f "${ASSET_PDF_FOOTER}" ]] || die "Missing asset in repo: ${ASSET_PDF_FOOTER}"
+
 uv run pyinstaller \
   --noconfirm \
   --clean \
   --name "${EXE_NAME}" \
+  --copy-metadata port \
+  --collect-all port \
+  --add-data "${ASSET_SOUNDFONT}:_internal/port/assets" \
+  --add-data "${ASSET_PDF_FOOTER}:_internal/port/assets" \
   --distpath "${WORK_DIR}/dist" \
   --workpath "${WORK_DIR}/build" \
   --specpath "${WORK_DIR}/spec" \
@@ -105,6 +125,21 @@ if [[ -f "${README_SRC}" ]]; then
   cp "${README_SRC}" "${OUT_DIR}/${APP_FOLDER_NAME}/README.txt"
 else
   echo "WARNING: README source not found at ${README_SRC}. (Skipping README copy.)"
+fi
+
+# Copy installer into Port/
+if [[ -f "${INSTALLER_SRC}" ]]; then
+  cp "${INSTALLER_SRC}" "${OUT_DIR}/${APP_FOLDER_NAME}/install.sh"
+  chmod +x "${OUT_DIR}/${APP_FOLDER_NAME}/install.sh" || true
+else
+  echo "WARNING: installer source not found at ${INSTALLER_SRC}. (Skipping install.sh copy.)"
+fi
+
+# Copy .env template into Port/
+if [[ -f "${ENV_TEMPLATE_SRC}" ]]; then
+  cp "${ENV_TEMPLATE_SRC}" "${OUT_DIR}/${APP_FOLDER_NAME}/.env.template"
+else
+  echo "WARNING: .env template source not found at ${ENV_TEMPLATE_SRC}. (Skipping .env.template copy.)"
 fi
 
 # ---- Smoke test built executable ----

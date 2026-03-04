@@ -1,83 +1,489 @@
 Port (macOS Apple Silicon / M1) - Command Line Tool
 ====================================================
 
-Package: Port-<version>-macos-arm64.zip
+Package: Port-v2.0.0-macos-arm64.zip
 
-This package contains a standalone `port` executable. You do NOT need to install
-Python.
+This package contains a standalone `port` executable, with Python 3.13 and all local dependencies installed 'under the hood' (User does not need to install Python or manage deps).
 
-Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If those
-tools are not installed, Port will warn at startup and skip the affected
-derivatives when running in default "all derivatives" mode.
+Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these tools are not installed, Port will warn at startup and skip the affected derivatives when running in default "all derivatives" mode.
+
 
 ----------------------------------------------------
 1) Install `port` so you can run it from any Terminal
 ----------------------------------------------------
 
-1. Unzip Port-<version>-macos-arm64.zip
+1. Unzip Port-v2.0.0-macos-arm64.zip
    You will get a folder named: Port/
 
-2. Move the `port` executable into a personal bin folder:
+2. Move the *entire* Port/ folder to user Applications directory (recommended):
 
-   mkdir -p "$HOME/.local/bin"
-   mv "/path/to/Port/port" "$HOME/.local/bin/port"
-   chmod +x "$HOME/.local/bin/port"
+   mkdir -p "$HOME/Applications" (create Applications directory if doesn't exist already')
+   mv "/path/to/Port" "$HOME/Applications/Port" (move Port folder to Applications)
 
-3. Add ~/.local/bin to your PATH (zsh is default on macOS):
+   IMPORTANT: Do not move only the `port` executable out of the Port/ folder.
+   This is a one-folder app, and `port` needs the other bundled files next to it.
 
-   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
-   source "$HOME/.zshrc"
+3. Run the installer script:
 
-4. Verify:
+   cd "$HOME/Applications/Port"
+   chmod +x ./install.sh
+   ./install.sh
+
+4. Verify installation (in a NEW Terminal window/tab):
 
    which port
    port --help
    port --version
 
 
+-----------------------------------------------
+2) Automatically check dependencies and assets
+-----------------------------------------------
+
+Prelim step: Run a preflight "doctor" check:
+
+Before running, especially for the first time, you can automatically verify that:
+- Port's bundled assets are present (Soundfont for mp3 generation & PDF footer image)
+- External tools (LilyPond / FFmpeg / FluidSynth) are available on your PATH (required for some of Port's derivative outputs)
+
+Run:
+
+  port doctor
+
+If any required item is missing, `port doctor` exits with status code 1 and prints a message telling the user what to install/fix.
+
+
 ------------------------------------------
-2) Install external tools (recommended)
+3) Install external tools (recommended)
 ------------------------------------------
 
-PDF + SVG outputs require LilyPond (provides `lilypond` and `musicxml2ly`)
-MP3 outputs require FluidSynth + FFmpeg
+PDF and SVG outputs require LilyPond (provides `lilypond` and `musicxml2ly`)
+MP3 outputs require FluidSynth and FFmpeg.
 
-Recommended installation method (Homebrew):
+Recommended installation method (using Homebrew via Mac terminal):
 
   brew install lilypond ffmpeg fluidsynth
 
-If you already have these installed (including via vendor installers), you do
-NOT need to reinstall them, as long as the commands are available on your PATH.
+If you already have these external dependencies installed (via Homebrew OR via vendor/online installers), you don't need to reinstall them as long as the commands are available on your PATH and the versions are compatible.
 
-You can verify:
+You can verify via Terminal:
 
   which lilypond musicxml2ly ffmpeg fluidsynth
 
+If this command can't find them, please install them and try again.
 
-----------------
-3) Run Port
-----------------
+------------------------------------------
+4) Credentials setup (AWS + Soundslice)
+------------------------------------------
 
-Typical full collection run:
+Port needs credentials to access AWS (for passthrough uploads) and Soundslice (for slice creation). You can provide credentials in two ways:
+
+A) Use the bundled .env template (convenient, but less secure)
+   The Port release folder includes a template file:
+
+     .env.template
+
+   To use it:
+     1) Copy and rename to ".env" in the SAME folder as the `port` executable (the Port/ folder):
+
+          cp .env.template .env
+
+     2) Edit ".env" and fill in the values/credentials for your AWS and Soundslice accounts into the blank fields (this is essentially the same procedure as per the .env file in ITMA's legacy Andy Dickson Collection pipeline implementation).
+
+   Notes:
+   - Treat ".env" content as private and sensitive.
+   - If you provide/create a .env file, Port will read and use the embedded credentials by default.
+   - If CLI credentials prompt flags are entered, they will override any .env values for a single processing run only.
+   - If you do not provide a .env file, you will need to enter credentials manually via prompt flags for each run.
+
+B) Prompt via CLI (more secure; less convenient)
+   Credentials are entered at runtime; they are not written to disk by Port and are not recorded in Terminal logs.
+
+   Prompt for Soundslice credentials:
+     port run ... --prompt-soundslice
+
+   Prompt for AWS credentials:
+     port run ... --prompt-aws
+
+   (You can also use both flags in the same run).
+
+   This is a very secure, best-practice approach but it is less convenient as credentials must be entered on each run.
+
+
+------------
+5) Run Port
+------------
+
+Port requires the user to provide the path to a collection root directory to run. The user can also provide an optional metadata CSV file.
+
+If you don't have a MetadataCSV, simply omit the `--metadata-csv` option and Port will generate one from scratch.
+
+If you provide a metadata CSV, it must be stored inside the collection root directory. It should be named per <collection_root>_metadata.csv (i.e. for a collection root named test_collection, the CSV file should be named test_collection_metadata.csv).
+
+The metadata CSV file must contain a unique identifier column named "slug" (case-sensitive) containing a unique value for each score. Port will not be able to process the collection if this column is missing. Please see the Metadata Schema section below for more details on metadata formatting & management.
+
+IMPORTANT: To ensure output derivaives/assets are written to the correct local and remote locations, input score xml files must be provided by the user in a single folder under the collection root named per: "<collection_root>_xml"
+(i.e. for a collection root named test_collection, input score files should be stored in test_collection/test_collection_xml subfolder).
+
+
+Typical full collection processing run:
 
   port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV"
 
-Derivatives only:
+Creating derivatives/assets only:
 
   port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process derivatives
 
-Analysis only:
+Running musicological analyses only:
 
   port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process analysis
 
-If you don't have a MetadataCSV, simply omit the `--metadata-csv` option and Port will generate one for you.
+
+Port can also process single score files instead of a full collection. There are two ways to select a score for processing:
+
+A) Select a single score by ITMA id / slug (--itma-id)
+
+  # Full processing (all workflows) for ONE score by slug:
+  port run --collection-root "/path/to/CollectionRoot" \
+    --itma-id <ITMA_ID> \
+    --process all
+
+Notes:
+- When selecting a score by --itma-id, the score file must exist inside the collection’s XML folder.
+
+B) Select a single score by file path (--score-path)
+
+  # Full processing (all workflows) for ONE file:
+  port run --collection-root "/path/to/CollectionRoot" \
+    --score-path "/path/to/CollectionRoot/<collection_root>_xml/<ITMA_ID>.xml" \
+    --process all
+
+Notes (for both collection and score processing):
+- --collection-root is always required, even if only processing a single file.
+- Use quotes if any paths contain spaces, and check that the quotes are correctly-formatted (they must be plain text (") not formatted 'curly' quotes!
+- Input files can be either .xml or .musicxml.
+
+
+--------------------------
+6) Advanced functionality
+--------------------------
+
+The examples below illustrate how to run individual steps of the processing pipeline in advanced/non-standard configurations.
+
+A) If you want to run a single processing step, for example Soundslice ONLY (no analysis / no derivatives), on an entire collection:
+
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process soundslice
+
+B) If you want to select and run two processing steps, for example, Breathnach codes (bb_code) plus Soundslice:
+
+Port’s CLI runs a single processing workflow per run (analysis OR Soundslice OR derivatives OR passthrough-aws OR all).
+So the most reliable way to do bespoke combinations like this is via two separate Port runs:
+
+  # 1) Compute bb_code only (analysis subset):
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" \
+    --process analysis \
+    --analysis-method bb_code
+
+  # 2) Upload to Soundslice only:
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" \
+    --process soundslice
+
+ Port can also run in parallel mode, per the following example. Caveat: This functionality is still experimental/beta.
+
+C) Typical full collection run in parallel:
+
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" \
+    --process all \
+    --parallel \
+    --max-workers 8
+
+Notes:
+- Start with max-workers equal to your CPU core count and adjust if needed.
+- Parallel mode increases load on your machine and on any external tooling invoked during derivative creation.
+- It may be advisable to contact Soundslice before interacting with their API in parallel mode.
+
+
+------------------------------------------
+7) CLI reference (commands & options)
+------------------------------------------
+
+Port uses a subcommand-based CLI. The primary commands are:
+
+  port doctor (as described in the "Doctor command" section above)
+
+  port run [OPTIONS] (as described in the "Run Port" section above)
+
+Global options:
+  -h, --help
+      Show help and exit.
+
+  --version
+      Show version and exit.
+
+Doctor command:
+  port doctor
+      Checks to verify Port's bundled assets are present and that
+      required external tools are available on PATH.
+      Exit code: 0 on success, 1 if any required check fails
+      (Exit code 1 also prints a message explaining what needs to be installed/fixed).
+
+Run command:
+  port run [OPTIONS]
+      Run Port's processing pipeline.
+
+Required for `run`:
+  --collection-root <PATH>
+      Full path to the collection root directory. Use quotes if the path contains spaces.
+
+Options for run:
+
+Score selection (optional; defaults to --all if none provided):
+  --all
+      Process all MusicXML files in the collection’s "<collection_root>_xml" subdirectory.
+
+  --itma-id <SLUG>
+      Process a single score by its ITMA id ("slug"). Input score file must be stored inside the collection root directory.
+
+  --score-path <PATH>
+      Process a single score by its file path.
+
+Workflow selection:
+  --process <analysis|derivatives|soundslice|passthrough-aws|all>
+      Choose which workflow option to run. Default is: all.
+      all: Run entire Port workflow
+      analysis: Run musicological analyses only
+      derivatives: Generate all derivative outputs (pdf, svg, mp3, MIDI, ABC Notation)
+      soundslice: Create Soundslice slices
+      passthrough-aws: Upload passthrough assets to AWS (MusicXML and mp3 files, if provided)
+
+Metadata I/O:
+  --metadata-csv <PATH>
+      Optional input metadata CSV path (must be stored inside collection root directory).
+
+  By default, whether metadata is provided or not, Port will generate a new metadata CSV named per <collection_root>_processed.csv. If a metadata CSV is provided, it will have new columns and content added to record the various outputs and derivatives created by Port. If a metadata CSV is not provided, Port will generate one from scratch and record the same output columns & content.
+
+  --no-save
+      Run processing but do not write any output CSV (useful for development/testing).
+
+Parallel processing:
+  --parallel
+      Add this flag to enable parallel score processing. Caveat: This functionality is still experimental/beta.
+
+  --max-workers <INT>
+      Maximum worker processes for parallel mode (no effect unless --parallel flag is set).
+
+Select specific analysis method(s):
+  --analysis-method <key_signature|mode|tonic|time_signature|number_of_parts|bb_code>
+      Run only the selected analysis method(s) chosen from the options listed above. If no analysis-method is provided, all analysis methods will run.
+
+      key_signature: calculate key signature
+      mode: extract mode from key signature
+      tonic: extract tonic from key signature
+      time_signature: extract time signature from score
+      number_of_parts: calculate number of parts in the score
+      bb_code: generate Breathnach code from incipit
+
+Select specific derivative method(s) (repeatable):
+  --derivative-method <pdf_download|featured_image|midi_audio_full|incipit_audio|abc_notation>
+
+       Run only the selected derivative method chosen from the options listed above. If no derivative-method is provided, all derivative methods run.
+
+       pdf_download: Generate PDF score
+       featured_image: Generate incipit SVG
+       midi_audio_full: Generate full score MIDI file
+       incipit_audio: Generate incipit audio file (mp3)
+       abc_notation: Create ABC Notation version of the score
+
+Credential prompts:
+  --prompt-soundslice
+      Prompt for Soundslice credentials for the current run (overrides any .env/env values).
+
+  --prompt-aws
+      Prompt for AWS credentials for the current run (overrides any .env/env values).
+
 
 -------------------------
-4) Logs / troubleshooting
+8) Logs / troubleshooting
 -------------------------
 
-Preflight warnings are printed to the Terminal and also written to:
+Preflight/setup warnings are printed to the Terminal and also written to:
 
   ~/Library/Logs/Port/
 
-If you need support, please send the newest log file from that folder to support.
+If you need support, please send the newest log file from that folder to support (hello@atlanticarts.net).
+
+Tip: If Port fails early or skips outputs, run:
+
+  port doctor
+
+This quickly highlights missing external tools or missing bundled assets.
+
+
+---------------------------
+APPENDIX I: Metadata Schema
+---------------------------
+
+Port reads and writes metadata CSV files using a strict schema. Input CSVs:
+- MUST contain the required unique identifier column: slug
+- MUST NOT contain extra columns outside the schema (hard error)
+- MAY omit some schema columns (Port will add them when writing output)
+
+Field categories:
+- PRESERVE: Port will not overwrite these fields if they already exist in the metadata table.
+- OVERWRITE: Port may write/update these fields during processing.
+- CONSTANT: Port always writes a fixed constant value to this field (as part of overwrite rules).
+
+Fields (in output order):
+
+  slug
+    Description: Unique identifier field. Provided by ITMA.
+    Type: PRESERVE
+
+  title
+    Description: Item title. Provided by ITMA.
+    Type: PRESERVE
+
+  federated_search_term
+    Description: Modified/simlified content from 'Title' field. Provided by ITMA.
+    Type: PRESERVE
+
+  alternative_title
+    Description: Item alt title. Provided by ITMA.
+    Type: PRESERVE
+
+  composer
+    Description: Score composer. Provided by ITMA.
+    Type: PRESERVE
+
+  tune_type
+    Description: Tune type (Reel, Jig, etc). Provided by ITMA.
+    Type: PRESERVE
+
+  related_entries
+    Description: Related items in ITMA's holdings. Provided by ITMA.
+    Type: PRESERVE
+
+  explore_tag
+    Description: Content is always 'Port' string.
+    Type: CONSTANT
+    Constant value: Port
+
+  collection_tag
+    Description: Stores collection tag string, which is auto-derived by Port from collection root directory path.
+    Type: OVERWRITE
+
+  source
+    Description: Stores collection name as defined in ITMA catalogue. Provided by ITMA.
+    Type: PRESERVE
+
+  key_signature
+    Description: Holds key detected by the Music21 Krumhansl-Schmuckler key detection algorithm.
+    Type: OVERWRITE
+
+  mode
+    Description: Holds mode populated from key signature.
+    Type: OVERWRITE
+
+  tonic
+    Description: Holds tonic populated from key signature.
+    Type: OVERWRITE
+
+  time_signature
+    Description: Time signature as encoded in the score. Populated via Port's time signature extraction.
+    Type: OVERWRITE
+
+  number_of_parts
+    Description: Number of structural parts in the score. Populated via Port's part counting heuristic, which calculates the number of double and final barlines in the score.
+    Type: OVERWRITE
+
+  abc_notation
+    Description: ABC Notation encoding of the score. Populated via abc_xml_converter Python library's ABC conversion.
+    Type: OVERWRITE
+
+  bb_code
+    Description: Breandán Breathnach code (8-value scale degree sequence representing the melodic contour of the incipit). Populated via Port's custom Breathnach code generation algorithm.
+    Type: OVERWRITE
+
+  featured_image
+    Description: Holds AWS path to the incipit SVG file.
+    Type: OVERWRITE
+
+  image_alt_text
+    Description: Content is always 'Musical Notation' string.
+    Type: CONSTANT
+    Constant value: Musical Notation
+
+  summary
+    Description: Provided by ITMA, string formatted per
+    'from <collection name>'.
+    Type: PRESERVE
+
+  main_textbox
+    Description: Provided by ITMA.
+    Type: PRESERVE
+
+  soundslice_iframe
+    Description: Holds Soundslice scorehash, populated via Soundslice API.
+    Type: OVERWRITE
+
+  score_track_title
+    Description: Performance mp3 track title. Provided by ITMA.
+    Type: PRESERVE
+
+  score_track_mp3
+    Description: Holds AWS URI for performance mp3 file. URI mirrors local file name and directory structure for any provided performance mp3 file stored in <collection_root>/<collection_root>_performance_mp3/ subfolder.
+    Type: OVERWRITE
+
+  score_track_rights
+    Description: Content is always 'In Copyright' string.
+    Type: CONSTANT
+    Constant value: In Copyright
+
+  score_track_catalog_url
+    Description: Provided by ITMA, online catalogue link for performance mp3 file.
+    Type: PRESERVE
+
+  score_track2_title
+    Description: Slow mp3 track title. Provided by ITMA.
+    Type: PRESERVE
+
+  score_track2_mp3
+    Description: Holds AWS URI for slow mp3 file. URI mirrors local file name and directory structure for a slow mp3 file provided in <collection_root>/<collection_root>_slow_mp3/ subfolder.
+    Type: OVERWRITE
+
+  score_track2_rights
+    Description: Content is always 'In Copyright' string.
+    Type: CONSTANT
+    Constant value: In Copyright
+
+  score_track2_catalog_url
+    Description: Provided by ITMA, online catalogue link for slow mp3 file..
+    Type: PRESERVE
+
+  video_url
+    Description: Provided by ITMA, Youtube embed code for video.
+    Type: PRESERVE
+
+  video_title
+    Description: Provided by ITMA, catalogue title field content for video.
+    Type: PRESERVE
+
+  video_catalog_url
+    Description: Provided by ITMA, online catalogue link for video file.
+    Type: PRESERVE
+
+  pdf_download
+    Description: Holds AWS URI for score PDF file created using Muic21 & LilyPond.
+    Type: OVERWRITE
+
+  midi_audio_full
+    Description: Holds AWS URI for score MIDI file created using Music21.
+    Type: OVERWRITE
+
+  incipit_audio
+    Description: Holds AWS URI for incipit MP3 file created using FluidSynth, FFmpeg, and GeneralUser-GS soundfont..
+    Type: OVERWRITE
+
+  musicxml
+    Description: Holds AWS URI for a remote copy of an input MusicXML file. URI mirrors local file name and directory structure for any provided input MusicXML file stored in <collection_root>/<collection_root>_xml/ subfolder.
+    Type: OVERWRITE

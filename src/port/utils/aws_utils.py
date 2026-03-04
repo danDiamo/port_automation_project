@@ -3,17 +3,16 @@ This file contains Python functions that use the boto3 library to connect to
 Amazon AWS in Python using CLI credentials.
 """
 
-# TODO: Add helper to list content under a specific prefix within a bucket?
-
 import boto3
 import os
 import mimetypes
+import warnings
 
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
 from typing import List, Optional
 
-# Securely load AWS credentials from .env file
+# Securely load AWS credentials from .env.template file
 load_dotenv()
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION")
 
@@ -23,8 +22,12 @@ def _s3_resource():
     Small helper to hardcode use of boto3.resource (i.e. not boto3.client)
     and the 'eu-west-1' AWS region.
     """
-    # Hardcode our region in case it's not given in .env
-    region = AWS_REGION or "eu-west-1"
+    # Read region at call time (do NOT cache at import time).
+    # This ensures that:
+    # - centralized .env loading in CLI (or test setup) is respected even if
+    #   it happens after this module is imported.
+    # - region changes via environment variables take effect immediately.
+    region = (os.getenv("AWS_DEFAULT_REGION") or "").strip() or "eu-west-1"
     return boto3.resource("s3", region_name=region)
 
 
@@ -34,9 +37,12 @@ def create_s3_bucket(bucket_name: str) -> str:
     s3 = _s3_resource()
 
     try:
+        # Prefer the live env var at call time; fall back to the cached value for
+        # backwards compatibility.
+        region = (os.getenv("AWS_DEFAULT_REGION") or "").strip() or AWS_REGION
         s3.create_bucket(
             Bucket=bucket_name,
-            CreateBucketConfiguration={"LocationConstraint": AWS_REGION},
+            CreateBucketConfiguration={"LocationConstraint": region},
         )
     except ClientError as e:
         # If the bucket exists, return its name along with the error.
@@ -153,7 +159,7 @@ def copy_mp3_to_aws(
         mp3_path: Optional[str],
         collection_root: str,
         bucket_name: str = "port.itma.ie"
-) -> Optional[str]:
+) -> Optional[str | None]:
     """
     Upload a single MP3 file to S3 (port.itma.ie), mirroring the local
     directory structure relative to collection_root.
@@ -186,7 +192,11 @@ def copy_mp3_to_aws(
         )
         return f"s3://{bucket_name}/{object_key}"
     except Exception as e:
-        raise RuntimeError(
-            f"Failed to copy MP3 to AWS ({mp3_path}): {e}"
-        ) from e
+        warnings.warn(
+            f"Failed to copy MP3 to AWS ({mp3_path}). "
+            "Skipping this processing step. "
+            f"Error: {e}",
+            UserWarning,
+        )
+        return None
 

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import argparse
 import os
+
+from dotenv import load_dotenv
 from getpass import getpass
 from pathlib import Path
 from shutil import get_terminal_size
@@ -243,6 +245,17 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
              "credentials)."
     )
 
+    sub.add_parser(
+        "doctor",
+        help="Check presence of required external tools and bundled assets "
+             "before running.",
+        formatter_class=parser.formatter_class,
+        description=(
+            "Run preflight checks to verify Port's bundled assets exist and "
+            "that required external tools are available on PATH."
+        ),
+    )
+
     return parser, run
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -309,7 +322,7 @@ def _progress_bar_label(mode: ProcessingMode) -> str:
 def _prompt_soundslice_credentials() -> None:
     """
     Prompt for Soundslice credentials and store them in environment variables.
-    This overrides any .env-loaded values for the duration of this run only.
+    This overrides any .env.template-loaded values for the duration of this run only.
     """
     app_id = input("Soundslice application id: ").strip()
     password = getpass("Soundslice password: ").strip()
@@ -333,8 +346,42 @@ def _prompt_aws_credentials() -> None:
         os.environ["AWS_DEFAULT_REGION"] = region
 
 
+def _load_dotenv_from_executable_dir() -> None:
+    """
+    Load .env file from a stable location.
+
+    - In packaged (PyInstaller) builds: load from the executable directory.
+      This supports the release layout:
+        Port/
+          port
+          .env.template  (user copies to .env)
+          .env           (optional; contains credentials)
+
+      We intentionally do NOT load from the current working directory, so users
+      can run `port ...` from anywhere.
+
+    - In dev (running from source): load from the repo root .env so local
+      development and PyCharm run configs behave as expected.
+    """
+    import sys
+
+    is_frozen = bool(getattr(sys, "frozen", False))
+
+    if is_frozen:
+        exe_path = Path(sys.executable).resolve()
+        dotenv_path = exe_path.parent / ".env"
+    else:
+        # src/port/cli.py -> repo root is two parents up from "src"
+        repo_root = Path(__file__).resolve().parents[2]
+        dotenv_path = repo_root / ".env"
+
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path=dotenv_path, override=False)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
+    _load_dotenv_from_executable_dir()
 
     if argv is None:
         import sys
@@ -342,11 +389,23 @@ def main(argv: list[str] | None = None) -> int:
 
     # If user runs `port` with no args, show help instead of raising an error.
     if not argv or argv in (["-h"], ["--help"]):
-        _parser, run = _build_parser()
+        parser, run = _build_parser()
+
+        # Top-level help (includes global options like --version)
+        parser.print_help()
+
+        # Also show the "run" subcommand help
+        # so users see all options in one place.
+        print("\n" + ("-" * 80))
+        print("Run command help (most common):\n")
         run.print_help()
         return 0
 
     args = _parse_args(argv)
+
+    if args.command == "doctor":
+        from .doctor import main as doctor_main
+        return int(doctor_main([]))
 
     if args.command != "run":
         raise RuntimeError(f"Unknown command: {args.command}")
@@ -355,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
     mode = _processing_mode_from_args(args)
 
     # Prompt creds only if asked.
-    # Otherwise, existing .env/env credentials apply.
+    # Otherwise, existing .env.template/env credentials apply.
     if args.prompt_soundslice:
         _prompt_soundslice_credentials()
     if args.prompt_aws:

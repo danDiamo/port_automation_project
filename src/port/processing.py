@@ -261,7 +261,12 @@ class ScoreProcessor:
     ) -> dict[str, dict[str, Any]]:
         """Process score and return metadata patch."""
         score = Score(score_path, collection_root=context.collection_root)
-
+        # Populate Score.title for internal use (PDFs, Soundslice, etc.).
+        #
+        # NOTE:
+        # - Output-metadata `title` is preserve-only & can't be overwritten
+        #   (per metadata_schema.py).
+        # - We do not include Score.title in the metadata patch.
         score.title = score.set_metadata(
             custom_title=custom_title,
             collection_metadata=collection_metadata,
@@ -269,7 +274,7 @@ class ScoreProcessor:
             has_metadata=has_metadata,
         )
 
-        score_metadata_patch: dict[str, Any] = {"title": score.title}
+        score_metadata_patch: dict[str, Any] = {}
         score_metadata_patch.update(
             self._run_processing_steps(
                 score=score,
@@ -384,6 +389,7 @@ class ScoreProcessor:
 
         return out
 
+
     def _run_derivatives_steps(
         self,
         *,
@@ -415,18 +421,18 @@ class ScoreProcessor:
         return out
 
     def _run_soundslice_step(
-        self,
-        *,
-        score: Score,
-        itma_id: str,
-        soundslice_folder_id: int | None,
+            self,
+            *,
+            score: Score,
+            itma_id: str,
+            soundslice_folder_id: int | None,
     ) -> dict[str, Any]:
-        embed_url = score.create_soundslice_slice(
+        embed_id = score.create_soundslice_slice(
             collection_metadata=None,  # title already on Score.title
             itma_id=itma_id,
             _folder_id=soundslice_folder_id,
         )
-        return {"soundslice_iframe": embed_url}
+        return {"soundslice_iframe": embed_id} if embed_id else {}
 
     def _run_passthrough_aws_step(
         self,
@@ -438,11 +444,13 @@ class ScoreProcessor:
         out: dict[str, Any] = {}
 
         # copy MusicXML file to S3 and record metadata
-        out["musicxml"] = score.copy_musicxml_file_to_aws(
+        musicxml_uri = score.copy_musicxml_file_to_aws(
             collection_root=context.collection_root.parent
         )
+        if musicxml_uri:
+            out["musicxml"] = musicxml_uri
         # copy incipit mp3s file to S3 and record metadata
-        incipit_mp3_path = context.incipit_mp3_dir / f"{itma_id}.mp3"
+        incipit_mp3_path = context.incipit_mp3_dir / f"{itma_id}_incipit.mp3"
         if incipit_mp3_path.exists():
             incipit_mp3_uri = copy_mp3_to_aws(
                 str(incipit_mp3_path),
@@ -594,7 +602,7 @@ class CollectionProcessor:
         # Build a lookup of just the metadata fields Score needs.
         metadata_lookup: dict[str, dict[str, str]] | None = None
         if (
-                metadata_csv_path is not None and 
+                metadata_csv_path is not None and
                 collection_metadata.metadata is not None
         ):
             metadata_lookup = {}
@@ -631,7 +639,7 @@ class CollectionProcessor:
 
         soundslice_folder_id: int | None = None
         if processing_steps.mode in {
-            ProcessingMode.SOUNDSLICE, 
+            ProcessingMode.SOUNDSLICE,
             ProcessingMode.ALL
         }:
             soundslice_folder_id = check_soundslice_folder_exists(
@@ -640,7 +648,7 @@ class CollectionProcessor:
         metadata_patches: dict[str, dict[str, Any]] = {}
         has_metadata = metadata_csv_path is not None
 
-        # Processes scores sequentially or in parallel per 'processing_steps' 
+        # Processes scores sequentially or in parallel per 'processing_steps'
         # settings
         if not processing_steps.parallel:
             metadata_lookup = (
@@ -681,7 +689,7 @@ class CollectionProcessor:
                         analysis_methods=processing_steps.analysis_methods,
                         derivative_methods=processing_steps.derivative_methods,
                         soundslice_folder_id=soundslice_folder_id,
-                        score_metadata=metadata_lookup,  
+                        score_metadata=metadata_lookup,
                         has_metadata=has_metadata,
                     )
                     for p in score_paths

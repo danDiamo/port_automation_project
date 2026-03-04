@@ -146,6 +146,13 @@ def main() -> int:
     if not argv or argv in (["-h"], ["--help"], ["--version"]):
         return port_main(argv)
 
+    # IMPORTANT:
+    # Auto-injecting methods only makes sense for `port run`.
+    # For other subcommands (e.g. `port doctor`), this
+    # causes argparse "unrecognized arguments" errors.
+    if argv[0] != "run":
+        return port_main(argv)
+
     # Respect explicit derivative choices: do not auto-skip; let it fail
     # later if needed.
     if _has_flag(argv, "--derivative-method"):

@@ -17,6 +17,7 @@ import re
 import shutil
 import tempfile
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
 import music21
@@ -61,11 +62,10 @@ def cleanup_lilypond_formatting(
       - title (required; will fallback to 'untitled' if missing/blank)
       - composer (set to ##f if missing/blank)
       - poet (used for tune_type metadata; set to ##f if missing/blank)
-      - source (optional; prints below the score on page 1 only)
+      - source (optional; prints below the score at the end of the document)
     """
 
     def _set_pdf_header_font(text: str) -> str:
-
         """
         Forces Lilypond to use Arial for the PDF header text (
         title/composer/etc.) instead of default font.
@@ -73,7 +73,6 @@ def cleanup_lilypond_formatting(
         Also increases spacing between header elements and the score for
         readability.
         """
-
         if suppress_header:
             return text
 
@@ -89,37 +88,30 @@ def cleanup_lilypond_formatting(
             return text
 
         arial_overrides = r"""
-  % PORT_HEADER_FONT_ARIAL
-  % Use Arial for the PDF header text (title/composer/etc.).
-  % This affects the title markup blocks without changing global fonts
-  % across the entire document.
-  %
-  % Increase whitespace above/below header blocks for readability.
-  bookTitleMarkup = \markup \override #'(font-name . "Arial") \fill-line {
-    \column {
-      \vspace #4
-      \fill-line { \fontsize #6 \fromproperty #'header:title }
-      \vspace #2
-      \fill-line {
-        \fontsize #1
-        \fromproperty #'header:composer
-        \fromproperty #'header:poet
+      % PORT_HEADER_FONT_ARIAL
+      % Use Arial for the PDF header text (title/composer/etc.).
+      % This affects the title markup blocks without changing global fonts
+      % across the entire document.
+      %
+      % Increase whitespace above/below header blocks for readability.
+      %
+      % IMPORTANT:
+      % We intentionally define bookTitleMarkup and disable scoreTitleMarkup to
+      % avoid printing the header twice (book-level header + score-level header).
+      bookTitleMarkup = \markup \override #'(font-name . "Arial") \fill-line {
+        \column {
+          \vspace #4
+          \fill-line { \fontsize #6 \fromproperty #'header:title }
+          \vspace #2
+          \fill-line {
+            \fontsize #1
+            \fromproperty #'header:composer
+            \fromproperty #'header:poet
+          }
+        }
       }
-    }
-  }
-  scoreTitleMarkup = \markup \override #'(font-name . "Arial") \fill-line {
-    \column {
-      \vspace #4
-      \fill-line { \fontsize #6 \fromproperty #'header:title }
-      \vspace #2
-      \fill-line {
-        \fontsize #1
-        \fromproperty #'header:composer
-        \fromproperty #'header:poet
-      }
-    }
-  }
-""".rstrip()
+      scoreTitleMarkup = ##f
+    """.rstrip()
 
         return re.sub(
             r"(?s)(\\paper\s*\{)",
@@ -131,54 +123,66 @@ def cleanup_lilypond_formatting(
     def _escape_ly(s: str) -> str:
         """
         Escape special characters for LilyPond string values.
+
+        LilyPond strings must not contain literal newlines. We therefore
+        normalize all whitespace to single spaces before escaping.
         """
-        return str(s).strip().replace("\\", "\\\\").replace('"', '\\"')
+        normalized = re.sub(r"\s+", " ", str(s)).strip()
+        return normalized.replace("\\", "\\\\").replace('"', '\\"')
 
-    def _set_footer_textbox(text: str) -> str:
+    def _insert_collection_name_at_document_end(text: str) -> str:
         """
-        Add a first-page-only footer (left-aligned) below the score content.
-
-        - Only show on page 1.
-        - Text comes from metadata field 'source' if present.
-        - Must be Arial.
-        - Should sit above the PDF footer overlay without being obscured.
-
+        Append the collection/source line as a markup block at the end of
+        the document (after the score).
         """
         if suppress_header:
             return text
 
-        # Ensure there is a \paper block to attach footer markup to.
-        if not re.search(r"(?s)\\paper\s*\{", text):
-            text += r"""
-\paper {
-}
-""".lstrip()
-
-        if "PORT_FIRST_PAGE_SOURCE_FOOTER" in text:
+        if "PORT_SOURCE_AT_DOCUMENT_END" in text:
             return text
 
-        footer_markup = r"""
-  % PORT_FIRST_PAGE_SOURCE_FOOTER
-  % Print the collection name below the score content on page 1 only.
-  % Keep it above the PDF footer overlay by reserving enough bottom margin.
-  oddFooterMarkup = \markup
-    \override #'(font-name . "Arial")
-    \on-the-fly #first-page
-    \fill-line {
-      \left-column {
-        \fontsize #1
-        \wordwrap-string \fromproperty #'header:source
-      }
-    }
-  evenFooterMarkup = \oddFooterMarkup
-""".rstrip()
+        source_clean = str(source).strip() if source is not None else ""
+        if not source_clean:
+            return text
 
-        return re.sub(
-            r"(?s)(\\paper\s*\{)",
-            lambda m: f"{m.group(1)}\n{footer_markup}\n",
-            text,
-            count=1,
-        )
+        # Try to insert immediately after the single \score block to reduce the
+        # chance of this content being orphaned on final page.
+        score_match = re.search(r"(?s)\\score\s*\{", text)
+        if score_match is None:
+            insert_at = len(text)
+        else:
+            start = score_match.end()  # position just after the opening "{"
+            depth = 1
+            i = start
+            while i < len(text) and depth > 0:
+                ch = text[i]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                i += 1
+            insert_at = i if depth == 0 else len(text)
+
+        safe_source = _escape_ly(source_clean)
+
+        source_markup = rf"""
+% PORT_SOURCE_AT_DOCUMENT_END
+% Print collection/source below the final system (end of document).
+\markup
+  \override #'(font-name . "Arial")
+  \fill-line {{
+    \left-column {{
+      \vspace #1
+      \fontsize #1
+      \wordwrap {{ "{safe_source}" }}
+    }}
+  }}
+""".lstrip()
+
+        # Insert with surrounding newlines so we don't glue tokens together.
+        prefix = text[:insert_at].rstrip() + "\n\n"
+        suffix = "\n\n" + text[insert_at:].lstrip()
+        return prefix + source_markup.rstrip() + suffix
 
     # Remove explicit tempo markup and tempo settings
     ly_text = re.sub(r"(?m)^\s*\\tempo\b.*$\n?", "", ly_text)
@@ -327,7 +331,7 @@ def cleanup_lilypond_formatting(
                 count=1,
             )
 
-        # Populate source (for first-page-only footer line)
+        # Populate source (used by our end-of-document source markup).
         source_clean = str(source).strip() if source is not None else ""
         source_line = (
             f'  source = "{_escape_ly(source_clean)}"'
@@ -354,20 +358,31 @@ def cleanup_lilypond_formatting(
     footer_reserved_mm = 36
     if not re.search(r"(?s)\\paper\s*\{", ly_text):
         ly_text += r"""
-\paper {
-  ragged-last = ##t
-  ragged-last-bottom = ##t
-  indent = 0\mm
-  short-indent = 0\mm
-  left-margin = 12\mm
-  right-margin = 12\mm
-""".lstrip()
+    \paper {
+      ragged-last = ##t
+      ragged-last-bottom = ##t
+      indent = 0\mm
+      short-indent = 0\mm
+      left-margin = 12\mm
+      right-margin = 12\mm
+    }
+    """.lstrip()
+
+    # Suppress page numbers (they appear by default on multi-page PDFs).
+    if "PORT_SUPPRESS_PAGE_NUMBERS" not in ly_text:
+        page_num_overrides = r"""
+  % PORT_SUPPRESS_PAGE_NUMBERS
+  print-page-number = ##f
+""".rstrip()
+        ly_text = re.sub(
+            r"(?s)(\\paper\s*\{)",
+            lambda m: f"{m.group(1)}\n{page_num_overrides}\n",
+            ly_text,
+            count=1,
+        )
 
     # Apply Arial font to PDF header text.
     ly_text = _set_pdf_header_font(ly_text)
-
-    # Add the first-page-only source footer line (Arial).
-    ly_text = _set_footer_textbox(ly_text)
 
     # Overwrite existing bottom margin if present; insert if it's undefined.
     if re.search(r"(?m)^\s*bottom-margin\s*=", ly_text):
@@ -408,6 +423,30 @@ def cleanup_lilypond_formatting(
   \context { \Score \remove Metronome_mark_engraver }
 }
 """.lstrip()
+
+    # Encourage approx. ~4 measures per line for PDF output (soft preference).
+    #
+    # This does NOT force line breaks and does NOT count measures.
+    # Instead, it slightly increases horizontal spacing so LilyPond tends to
+    # fit fewer measures per system.
+
+    if not suppress_header and "PORT_PDF_4_BARS_PER_LINE_SOFT" not in ly_text:
+        ly_text += r"""
+% PORT_PDF_4_BARS_PER_LINE_SOFT
+% Soft layout preference: encourage fewer measures per system (often ~4 for
+% simple single-staff tunes) by increasing horizontal spacing slightly.
+%
+% Compatible with multi-staff scores because it applies at the Score level.
+\layout {
+  \context {
+    \Score
+    \override SpacingSpanner.spacing-increment = #1.6
+  }
+}
+""".lstrip()
+
+    # Insert source line at the end of the document (after the \score).
+    ly_text = _insert_collection_name_at_document_end(ly_text)
 
     return ly_text
 
@@ -624,9 +663,8 @@ def _barline_type_string(raw_barline: bar.Barline | None) -> str | None:
     """
     Return a barline type string if present, otherwise None.
 
-    We preserve whatever barline types we receive in the input, because
-    LilyPond
-    output should retain encoded barline formatting when possible.
+    We preserve whatever barline types (i.e. repeat markers, double & final
+    barlines) and pass through to the PDF.
     """
     if raw_barline is None:
         return None
@@ -635,6 +673,170 @@ def _barline_type_string(raw_barline: bar.Barline | None) -> str | None:
         return None
     s = str(t).strip()
     return s or None
+
+
+@dataclass(frozen=True)
+class _BarlineSnapshot:
+    """
+    Minimal snapshot of a barline that is safe to re-apply after
+    makeMeasures().
+
+    For non-repeat barlines, only `barline_type` is used.
+    For repeat barlines, `repeat_direction` and optional `repeat_times`
+    are used.
+
+    We keep this intentionally small and "preserve-only":
+      - No inference of missing repeat direction.
+      - No attempt to validate repeat pairing.
+    """
+
+    barline_type: str | None
+    repeat_direction: str | None = None
+    repeat_times: int | None = None
+
+
+def _snapshot_barline(raw_barline: bar.Barline | None) \
+        -> _BarlineSnapshot | None:
+    """
+    Snapshot a single barline, preserving repeat direction/times when present.
+
+    Note:
+        In music21, repeat barlines often have .type values like 'heavy-light'
+        or 'light-heavy'. Do not rely on barline.type == 'repeat' to detect
+        repeat markers. Use isinstance(raw_barline, bar.Repeat) instead.
+    """
+    if raw_barline is None:
+        return None
+
+    barline_type = _barline_type_string(raw_barline)
+
+    # Prefer explicit repeat objects (music21.bar.Repeat) when present.
+    if isinstance(raw_barline, bar.Repeat):
+        direction = getattr(raw_barline, "direction", None)
+        times = getattr(raw_barline, "times", None)
+
+        direction_clean = str(direction).strip() if direction is not None else None
+        times_int = int(times) if isinstance(times, int) else None
+
+        return _BarlineSnapshot(
+            # Store the visual barline style for completeness, but re-encoding
+            # is driven by repeat_direction.
+            barline_type=barline_type,
+            repeat_direction=direction_clean or None,
+            repeat_times=times_int,
+        )
+
+    # If it's not a bar.Repeat, preserve the plain barline type.
+    return _BarlineSnapshot(barline_type=barline_type)
+
+
+def _find_embedded_repeat_snapshot(
+        raw_bar: music21.stream.Measure,
+        *,
+        side: str,
+) -> _BarlineSnapshot | None:
+    """
+    Look for repeat markers encoded *as elements inside the measure*.
+
+    Preserve-only:
+      - We only return a snapshot when repeat direction is available.
+      - We do not infer direction from barline type or bar position.
+    """
+    side_clean = str(side).strip().lower()
+    if side_clean not in {"left", "right"}:
+        return None
+
+    want_direction = "start" if side_clean == "left" else "end"
+
+    for rep in raw_bar.getElementsByClass(bar.Repeat):
+        snap = _snapshot_barline(rep)
+        if snap is None:
+            continue
+        if snap.repeat_direction == want_direction:
+            return snap
+
+    return None
+
+
+def _snapshot_barlines_by_bar_idx(
+        *,
+        raw_bars: list[music21.stream.Measure],
+        start_bar_idx: int,
+) -> list[tuple[_BarlineSnapshot | None, _BarlineSnapshot | None]]:
+    """
+    Snapshot left/right barlines by bar index so we can re-apply them after
+    makeMeasures().
+
+    Sources we consider (in order):
+      1) Measure.leftBarline / Measure.rightBarline
+      2) Embedded bar.Repeat elements inside the measure (fallback)
+    """
+    barline_by_bar_idx: list[
+        tuple[_BarlineSnapshot | None, _BarlineSnapshot | None]
+    ] = []
+
+    for raw_bar in raw_bars[start_bar_idx:]:
+        left_snap = _snapshot_barline(getattr(raw_bar, "leftBarline", None))
+        right_snap = _snapshot_barline(getattr(raw_bar, "rightBarline", None))
+
+        # If repeat direction is missing, look for embedded Repeat objects.
+        if left_snap is None or (left_snap.repeat_direction is None):
+            embedded_left = _find_embedded_repeat_snapshot(
+                raw_bar, side="left"
+            )
+            left_snap = embedded_left or left_snap
+
+        if right_snap is None or (right_snap.repeat_direction is None):
+            embedded_right = _find_embedded_repeat_snapshot(
+                raw_bar, side="right"
+            )
+            right_snap = embedded_right or right_snap
+
+        barline_by_bar_idx.append((left_snap, right_snap))
+
+    return barline_by_bar_idx
+
+
+def _apply_barlines_by_bar_idx(
+        *,
+        clean_bars: list[music21.stream.Measure],
+        barline_by_bar_idx: list[
+            tuple[_BarlineSnapshot | None, _BarlineSnapshot | None]],
+) -> None:
+    """
+    Re-apply left/right barlines by index, preserving repeat direction/times
+    when available.
+    """
+    def _to_barline(snapshot: _BarlineSnapshot | None) -> bar.Barline | None:
+        if snapshot is None:
+            return None
+
+        # If we have repeat direction, rebuild a repeat barline.
+        if snapshot.repeat_direction:
+            rep = bar.Repeat()
+            rep.direction = snapshot.repeat_direction
+            if snapshot.repeat_times is not None:
+                rep.times = snapshot.repeat_times
+            return rep
+
+        if snapshot.barline_type:
+            return bar.Barline(snapshot.barline_type)
+
+        return None
+
+    # Assign left and right barlines to clean bars from snapshots.
+    for clean_bar, (lb_snap, rb_snap) in zip(
+            clean_bars,
+            barline_by_bar_idx,
+            strict=False,
+    ):
+        lb = _to_barline(lb_snap)
+        rb = _to_barline(rb_snap)
+
+        if lb is not None:
+            clean_bar.leftBarline = lb
+        if rb is not None:
+            clean_bar.rightBarline = rb
 
 
 def _pickup_end_offset_if_pickup(
@@ -820,30 +1022,6 @@ def _copy_notes_and_rests_to_clean_part(
         )
 
 
-def _snapshot_barlines_by_bar_idx(
-        *,
-        raw_bars: list[music21.stream.Measure],
-        start_bar_idx: int,
-) -> list[tuple[str | None, str | None]]:
-    """
-    Snapshot left/right barline types by bar index so we can re-apply them
-    after
-    makeMeasures().
-
-    The indices are relative to the kept bar sequence (i.e., raw_bars sliced
-    from start_bar_idx onward).
-    """
-    barline_by_bar_idx: list[tuple[str | None, str | None]] = []
-    for raw_bar in raw_bars[start_bar_idx:]:
-        barline_by_bar_idx.append(
-            (
-                _barline_type_string(getattr(raw_bar, "leftBarline", None)),
-                _barline_type_string(getattr(raw_bar, "rightBarline", None)),
-            )
-        )
-    return barline_by_bar_idx
-
-
 def _snapshot_voltas_by_bar_idx(
         *,
         raw_part: music21.stream.Part,
@@ -907,22 +1085,6 @@ def _renumber_bars_in_place(
         clean_bar.number = idx
         clean_bar.implicit = False
     return clean_bars
-
-
-def _apply_barlines_by_bar_idx(
-        *,
-        clean_bars: list[music21.stream.Measure],
-        barline_by_bar_idx: list[tuple[str | None, str | None]],
-) -> None:
-    """
-    Re-apply left/right barline types onto clean bars by index.
-    """
-    for clean_bar, (lb_t, rb_t) in zip(clean_bars, barline_by_bar_idx,
-                                       strict=False):
-        if lb_t:
-            clean_bar.leftBarline = bar.Barline(lb_t)
-        if rb_t:
-            clean_bar.rightBarline = bar.Barline(rb_t)
 
 
 def _apply_voltas_by_bar_idx(

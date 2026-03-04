@@ -203,16 +203,24 @@ def test_convert_score_to_midi(tmp_path):
         pytest.fail(f"Could not parse the generated MIDI file: {e}")
 
 
-def test_convert_score_to_abc(tmp_path):
-    """Test converting MusicXML to ABC notation"""
+def test_convert_score_to_abc(tmp_path, monkeypatch):
+    """Test converting MusicXML to ABC notation (offline: no real AWS)."""
     # Ensure we exercise the collection_root output policy:
     #   <collection_root>/<collection_root>_abc/<filename>.txt
     default_score = Score(happy_testfile, collection_root=tmp_path)
 
-    # Run conversion. With collection_root set, @sync_to_s3 returns an S3 URI.
-    abc_uri = default_score.convert_score_to_abc()
-    assert isinstance(abc_uri, str)
-    assert abc_uri.startswith("s3://")
+    # Force offline behavior: if S3 is attempted, fail and ensure we fall back
+    # to the local Path return.
+    def _offline_upload(*args, **kwargs):
+        raise RuntimeError("Offline test: S3 upload disabled")
+
+    monkeypatch.setattr(score_module, "upload_file_to_s3", _offline_upload)
+
+    # Run conversion; decorator should warn and return local Path.
+    with pytest.warns(UserWarning, match="S3 Sync failed"):
+        abc_result = default_score.convert_score_to_abc()
+
+    assert isinstance(abc_result, Path)
 
     # Verify the local file was also created.
     local_abc_path = (
@@ -259,13 +267,13 @@ def test_convert_score_to_pdf(tmp_path, default_score, monkeypatch):
         sanitized = _real_cleanup(ly_text, **kwargs)
 
         assert "PORT_HEADER_FONT_ARIAL" in sanitized
-        assert "PORT_FIRST_PAGE_SOURCE_FOOTER" in sanitized
+        assert "PORT_SOURCE_AT_DOCUMENT_END" in sanitized
 
         # Confirm Arial is explicitly set in our LilyPond markup.
         assert '(font-name . "Arial")' in sanitized
 
-        # Confirm the first-page-only footer content is present.
-        assert r"\on-the-fly #first-page" in sanitized
+        # Confirm the literal source text is embedded in markup.
+        assert "Example Collection Name" in sanitized
 
         return sanitized
 
@@ -595,7 +603,7 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
       - returns an embed URL
       - cleans up slice & folder
 
-    To run this test, set the following environment variables in .env:
+    To run this test, set the following environment variables in .env.template:
       RUN_SOUNDSLICE_INTEGRATION_TESTING=y
       APPLICATION_ID, PASSWORD
     """
@@ -608,7 +616,7 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
 
     if not os.getenv("APPLICATION_ID") or not os.getenv("PASSWORD"):
         pytest.skip("Missing Soundslice credentials. "
-                    "Set APPLICATION_ID and PASSWORD in .env.")
+                    "Set APPLICATION_ID and PASSWORD in .env.template.")
 
     # set up temp local paths
     folder_name = f"PYTEST_{secrets.token_hex(8)}"

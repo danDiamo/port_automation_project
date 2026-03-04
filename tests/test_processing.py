@@ -224,7 +224,8 @@ def test_score_processor_run_passthrough_aws_step_includes_optional_mp3(
     incipit_mp3_dir.mkdir(parents=True)
 
     itma_id = "alpha"
-    (incipit_mp3_dir / f"{itma_id}.mp3").write_bytes(b"fake-mp3-content")
+    (incipit_mp3_dir /
+     f"{itma_id}_incipit.mp3").write_bytes(b"fake-mp3-content")
 
     def _fake_copy_mp3_to_aws(
         mp3_path: str | None,
@@ -281,7 +282,9 @@ def test_collection_processor_run_without_input_metadata_writes_new_csv(
 
     def _fake_process_single_score(**kwargs: Any) -> dict[str, dict[str, Any]]:
         assert kwargs["itma_id"] == "alpha"
-        return {"alpha": {"title": "Alpha", "mode": "major"}}
+        # `title` is preserve-only. In "no input metadata CSV" mode we leave it
+        # blank rather than writing a pipeline-generated title.
+        return {"alpha": {"mode": "major"}}
 
     monkeypatch.setattr(
         ScoreProcessor,
@@ -305,7 +308,12 @@ def test_collection_processor_run_without_input_metadata_writes_new_csv(
 
     df = pd.read_csv(out_file, encoding="utf-8-sig")
     row = df.loc[df["slug"] == "alpha"].iloc[0]
-    assert row["title"] == "Alpha"
+
+    assert row["mode"] == "major"
+
+    # Title remains blank/empty in no-metadata mode.
+    title_cell = row["title"]
+    assert pd.isna(title_cell) or str(title_cell).strip() == ""
 
 
 def test_collection_processor_run_with_input_metadata_passes_metadata_adapter(
@@ -322,7 +330,7 @@ def test_collection_processor_run_with_input_metadata_passes_metadata_adapter(
         assert kwargs["custom_title"] is None
         assert kwargs["has_metadata"] is True
         assert kwargs["collection_metadata"] is not None
-        return {"alpha": {"title": "My Title"}}
+        return {"alpha": {"mode": "major"}}
 
     monkeypatch.setattr(
         ScoreProcessor,
@@ -392,7 +400,8 @@ def test_collection_processor_run_parallel_smoke_aggregates_patches(
 
     def _fake_process_single_score(**kwargs: Any) -> dict[str, dict[str, Any]]:
         itma_id = kwargs["itma_id"]
-        return {itma_id: {"title": itma_id.capitalize()}}
+        # use a non-preserve field
+        return {itma_id: {"mode": itma_id.capitalize()}}
 
     def _fake_as_completed(futures: list[_FakeFuture]):
         return list(reversed(futures))
