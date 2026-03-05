@@ -329,12 +329,6 @@ class Score:
         # metadata
         tune_type = score_metadata.get("tune_type")
         self.tune_type = self._cleanup_metadata(tune_type)
-        if self.tune_type is None:
-            itma_id = (itma_id or self.score_path.stem or "").strip()
-            warnings.warn(
-                f"Missing tune_type metadata for score {itma_id!r}. ",
-                UserWarning
-            )
 
         return self.title
 

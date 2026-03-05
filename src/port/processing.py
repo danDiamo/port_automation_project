@@ -79,7 +79,7 @@ class _MetadataLookup:
 
         metadata_row = dict(self.metadata_lookup[itma_id])
 
-        # Guard against string literals of pd.NA or nan appearing in lookup
+        # Stop pd.NA or nan appearing in lookup
         # if empty tune_type or composer fields are loaded
         for key, val in list(metadata_row.items()):
             if val is None:
