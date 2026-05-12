@@ -281,15 +281,12 @@ def _selection_from_args(args: argparse.Namespace) -> ScoreSelection:
 
 
 def _processing_mode_from_args(args: argparse.Namespace) -> ProcessingMode:
-    """Map CLI mode selection strings to ProcessingMode."""
-    mapping = {
-        "analysis": ProcessingMode.ANALYSIS,
-        "derivatives": ProcessingMode.DERIVATIVES,
-        "soundslice": ProcessingMode.SOUNDSLICE,
-        "passthrough-aws": ProcessingMode.PASSTHROUGH_AWS,
-        "all": ProcessingMode.ALL,
-    }
-    return mapping[str(args.process)]
+    """
+    Convert CLI argument to ProcessingMode enum.
+
+    Since enum values now match CLI strings exactly, we can do direct conversion.
+    """
+    return ProcessingMode(str(args.process))
 
 
 def _progress_bar(*, total: int, desc: str):

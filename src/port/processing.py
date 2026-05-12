@@ -58,19 +58,32 @@ class _MetadataLookup:
     """
     Picklable metadata lookup via a dict keyed by itma_id/slug.
 
-    Calls the `get_score_metadata(itma_id) API used by
-    Score.set_metadata(). This lets us keep serial and parallel
-    behavior consistent, while avoiding passing a pandas-based
-    CollectionMetadata object to subprocesses.
-    
-     Returns:
-    - A dict holding a single "row" of metadata.
-    - Includes both `federated_search_term` and `title` so Score.set_metadata()
-      can choose the best available title.
+    Provides the `get_score_metadata(itma_id)` API used by Score.set_metadata().
+    This keeps serial and parallel behavior consistent while avoiding passing
+    a pandas-based CollectionMetadata object to subprocesses.
+
+    Returns:
+        A dict holding a single "row" of metadata fields.
+        Includes both `federated_search_term` and `title` so Score.set_metadata()
+        can choose the best available title.
     """
     metadata_lookup: dict[str, dict[str, str]]
 
-    def get_score_metadata(self, itma_id: str) -> dict[str, Any]:
+    def get_score_metadata(self, itma_id: str) -> dict[
+        str, str]:  # Changed from Any to str
+        """
+        Get metadata for a single score by ITMA ID.
+
+        Args:
+            itma_id: Unique score identifier (slug).
+
+        Returns:
+            Dictionary of metadata fields for the score.
+
+        Raises:
+            ValueError: If itma_id is blank/empty.
+            KeyError: If itma_id not found in metadata.
+        """
         itma_id = str(itma_id or "").strip()
         if not itma_id:
             raise ValueError("itma_id slug is blank/empty.")
@@ -79,8 +92,7 @@ class _MetadataLookup:
 
         metadata_row = dict(self.metadata_lookup[itma_id])
 
-        # Stop pd.NA or nan appearing in lookup
-        # if empty tune_type or composer fields are loaded
+        # Convert pandas NA/nan values to empty strings
         for key, val in list(metadata_row.items()):
             if val is None:
                 metadata_row[key] = ""
@@ -222,11 +234,11 @@ class ScoreSelection:
 
 
 class ProcessingMode(str, Enum):
-    """Class holding our score processing modes."""
+    """Enum defining Port's score processing modes."""
     ANALYSIS = "analysis"
     DERIVATIVES = "derivatives"
     SOUNDSLICE = "soundslice"
-    PASSTHROUGH_AWS = "passthrough_aws"
+    PASSTHROUGH_AWS = "passthrough-aws"  # Changed from underscore to hyphen for CLI consistency
     ALL = "all"
 
 
@@ -524,26 +536,26 @@ class CollectionProcessor:
         return self._resolve_score_paths(context=context, selection=selection)
 
     def run(
-        self,
-        *,
-        collection_root: str | Path,
-        selection: ScoreSelection,
-        processing_steps: ScoreProcessingOrchestrator,
-        metadata_csv_path: str | Path | None = None,
-        save: bool = True,
-        progress: Any | None = None,
+            self,
+            *,
+            collection_root: str | Path,
+            selection: ScoreSelection,
+            processing_steps: ScoreProcessingOrchestrator,
+            metadata_csv_path: str | Path | None = None,
+            save: bool = True,
+            progress: Any | None = None,
     ) -> str | None:
         """
         Run collection processing, metadata updates, and create outputs.
 
         Args:
-            -- collection_root: Collection root directory.
-            -- selection: Score(s) to process.
-            -- processing_steps: Select processing mode & optionally select
+            collection_root: Collection root directory.
+            selection: Score(s) to process.
+            processing_steps: Select processing mode & optionally select
                 individual processing step(s).
-            -- metadata_csv_path: Optional metadata CSV path.
-            -- save: If False, do not write any output CSV.
-            -- progress: Optional TQDM progress bar.
+            metadata_csv_path: Optional metadata CSV path.
+            save: If False, do not write any output CSV.
+            progress: Optional TQDM progress bar.
                 If provided, this method will call progress.update(1) after
                 each score completes (in serial or parallel).
         """
@@ -552,69 +564,67 @@ class CollectionProcessor:
             context=context, selection=selection
         )
 
-        # If user doesn't supply an input metadata CSV, we still may want to
-        # build metadata table on a score-by-score basis:
-        # if a "_processed" metadata output file exists, load it and upsert
-        # into it; otherwise start from an empty metadata table
+        # Define default output path for processed metadata
         csv_out_path = (
-            context.collection_root
-            / f"{context.collection_root.name}_metadata_processed.csv"
+                context.collection_root
+                / f"{context.collection_root.name}_metadata_processed.csv"
         )
 
-        # set up metadata in and out paths
+        # Parse and validate user-provided metadata CSV path (if any)
         raw_path: Path | None = Path(
             metadata_csv_path) if metadata_csv_path else None
 
         if raw_path is not None:
             raw_path = raw_path.expanduser().resolve()
-            collection_root_resolved = context.collection_root.expanduser(
-            ).resolve()
+            collection_root_resolved = context.collection_root.expanduser().resolve()
 
-            # input metadata CSV must live inside collection root
+            # Validate that input metadata CSV lives inside collection root
             if not raw_path.is_relative_to(collection_root_resolved):
                 raise ValueError(
-                    "Input metadata CSV stored at:\n"
-                    f"{raw_path} must be stored inside the collection "
-                    f"root folder:\n"
-                    f"{collection_root_resolved}\n"
+                    f"Input metadata CSV must be stored inside the collection root directory.\n"
+                    f"  Metadata CSV location: {raw_path}\n"
+                    f"  Collection root: {collection_root_resolved}\n"
+                    f"  Please move your metadata CSV into the collection root folder and try again."
                 )
 
-        processed_path: Path | None = (
-            raw_path.with_name(f"{raw_path.stem}_processed{raw_path.suffix}")
-            if raw_path is not None
-            else None
-        )
-
-        # Loads collection metadata if a CSV file is provided; load
-        # work-in-progress 'processed' metadata file to allow repeated
-        # one-off score processing runs;
-        # otherwise builds a metadata table row-wise from scratch if neither
-        # raw or processed metadata files are available.
+        # Determine output path based on whether user provided metadata
         if raw_path is not None:
-            in_path = processed_path if (
-                    processed_path and processed_path.exists()
-            ) else raw_path
+            # User provided metadata - derive processed filename from input
+            processed_path: Path = raw_path.with_name(
+                f"{raw_path.stem}_processed{raw_path.suffix}"
+            )
+        else:
+            # No user input - use default processed path
+            processed_path = csv_out_path
+
+        # Load metadata based on what user provided
+        if raw_path is not None:
+            # User explicitly provided a metadata file - load exactly what they specified
+            # (don't auto-switch to processed file)
             collection_metadata = CollectionMetadata(
-                str(in_path),
+                str(raw_path),
                 collection_root=context.collection_root
             )
             collection_metadata.load_collection_metadata()
         else:
+            # No metadata CSV provided by user
+            # Check if a processed file exists from a previous run
             if csv_out_path.exists():
+                # Auto-load existing processed metadata to support re-processing
                 collection_metadata = CollectionMetadata(
                     str(csv_out_path),
                     collection_root=context.collection_root
                 )
                 collection_metadata.load_collection_metadata()
             else:
+                # No existing metadata - create empty table and populate from scratch
                 collection_metadata = CollectionMetadata(
                     None,
                     collection_root=context.collection_root
                 )
                 collection_metadata.create_empty_metadata_table()
 
-        # derive collection_tag if available (only run once per collection &
-        # don't fail if it's not available)
+        # Derive collection_tag if available (don't fail if unavailable)
         try:
             collection_metadata.collection_tag = (
                 collection_metadata.derive_collection_tag_from_collection_root()
@@ -622,7 +632,7 @@ class CollectionProcessor:
         except ValueError:
             pass
 
-        # Build a lookup of just the metadata fields Score needs.
+        # Build a lookup of metadata fields needed by Score processing
         metadata_lookup: dict[str, dict[str, str]] | None = None
         if (
                 metadata_csv_path is not None and
@@ -635,8 +645,7 @@ class CollectionProcessor:
                 if not itma_id:
                     continue
 
-                # Populate metadata lookup and convert any pandas None vals to
-                # empty strings
+                # Populate metadata lookup and convert pandas None values to empty strings
                 metadata_lookup[itma_id] = {
                     "federated_search_term": str(
                         row.get("federated_search_term")).strip(),
@@ -646,8 +655,8 @@ class CollectionProcessor:
                     "source": str(row.get("source")).strip()
                 }
 
-            # If we have an input metadata CSV, treat it as source of truth:
-            # every score file we process must have a metadata row.
+            # If user provided a metadata CSV, treat it as source of truth:
+            # every score file we process must have a corresponding metadata row
             missing = [
                 p.stem.strip()
                 for p in score_paths
@@ -660,6 +669,7 @@ class CollectionProcessor:
                     f"Metadata is missing for score file(s): {preview}{suffix}"
                 )
 
+        # Check if Soundslice folder exists (only for modes that need it)
         soundslice_folder_id: int | None = None
         if processing_steps.mode in {
             ProcessingMode.SOUNDSLICE,
@@ -671,10 +681,10 @@ class CollectionProcessor:
         metadata_patches: dict[str, dict[str, Any]] = {}
         has_metadata = metadata_csv_path is not None
 
-        # Processes scores sequentially or in parallel per 'processing_steps'
-        # settings
+        # Process scores sequentially or in parallel per processing_steps settings
         if not processing_steps.parallel:
-            metadata_lookup = (
+            # Serial processing
+            metadata_lookup_adapter = (
                 _MetadataLookup(metadata_lookup)
                 if (has_metadata and metadata_lookup is not None)
                 else None
@@ -688,18 +698,20 @@ class CollectionProcessor:
                     itma_id=itma_id,
                     context=context,
                     processing_steps=processing_steps,
-                    collection_metadata=metadata_lookup,
+                    collection_metadata=metadata_lookup_adapter,
                     soundslice_folder_id=soundslice_folder_id,
                     custom_title=None,
                     has_metadata=has_metadata,
                 )
                 for score, values in patch.items():
                     metadata_patches.setdefault(score, {}).update(values)
-                # update progress bar
+
+                # Update progress bar
                 if progress is not None:
                     progress.update(1)
 
         else:
+            # Parallel processing
             with ProcessPoolExecutor(
                     max_workers=processing_steps.max_workers
             ) as ex:
@@ -722,14 +734,16 @@ class CollectionProcessor:
                     patch = fut.result()
                     for score, values in patch.items():
                         metadata_patches.setdefault(score, {}).update(values)
-                    # update progress bar
+
+                    # Update progress bar
                     if progress is not None:
                         progress.update(1)
 
-        # Only write output CSV if we edited metadata content
+        # Only write output CSV if we have metadata changes
         if not metadata_patches:
             return None
 
+        # Apply updates (upsert allows new rows, apply requires existing rows)
         if processing_steps.allow_new_rows:
             collection_metadata.upsert_row_updates(metadata_patches)
         else:
@@ -738,15 +752,16 @@ class CollectionProcessor:
         if not save:
             return None
 
+        # Save processed metadata to appropriate output path
         if raw_path is None:
+            # No input CSV - save to default processed location
             out_path = (
                     context.collection_root
                     / f"{context.collection_root.name}_metadata_processed.csv"
             )
             return collection_metadata.save(output_path=str(out_path))
 
-            # If given an input CSV, always write to "<input>_processed.csv"
-            # so repeated runs overwrite the same processed file
+        # User provided input CSV - save to derived processed filename
         return collection_metadata.save(output_path=str(processed_path))
 
     def _resolve_score_paths(

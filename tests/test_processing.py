@@ -274,8 +274,8 @@ def _make_collection_layout(
 
 
 def test_collection_processor_run_without_input_metadata_writes_new_csv(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     collection_root, xml_dir = _make_collection_layout(tmp_path, name="Port")
     (xml_dir / "alpha.xml").write_text("<xml/>", encoding="utf-8")
@@ -286,10 +286,20 @@ def test_collection_processor_run_without_input_metadata_writes_new_csv(
         # blank rather than writing a pipeline-generated title.
         return {"alpha": {"mode": "major"}}
 
+    # Mock Soundslice folder check to prevent API calls in tests
+    def _fake_soundslice_check(folder_name: str) -> int:
+        return 12345  # Return a fake folder ID
+
     monkeypatch.setattr(
         ScoreProcessor,
         "process_single_score",
         staticmethod(_fake_process_single_score),
+    )
+
+    # Add this monkeypatch to prevent Soundslice API calls
+    monkeypatch.setattr(
+        "port.processing.check_soundslice_folder_exists",
+        _fake_soundslice_check,
     )
 
     cp = CollectionProcessor()
@@ -317,8 +327,8 @@ def test_collection_processor_run_without_input_metadata_writes_new_csv(
 
 
 def test_collection_processor_run_with_input_metadata_passes_metadata_adapter(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     collection_root, xml_dir = _make_collection_layout(tmp_path, name="Port")
     (xml_dir / "alpha.xml").write_text("<xml/>", encoding="utf-8")
@@ -332,10 +342,20 @@ def test_collection_processor_run_with_input_metadata_passes_metadata_adapter(
         assert kwargs["collection_metadata"] is not None
         return {"alpha": {"mode": "major"}}
 
+    # Mock Soundslice folder check to prevent API calls in tests
+    def _fake_soundslice_check(folder_name: str) -> int:
+        return 12345  # Return a fake folder ID
+
     monkeypatch.setattr(
         ScoreProcessor,
         "process_single_score",
         staticmethod(_fake_process_single_score),
+    )
+
+    # Add this monkeypatch to prevent Soundslice API calls
+    monkeypatch.setattr(
+        "port.processing.check_soundslice_folder_exists",
+        _fake_soundslice_check,
     )
 
     cp = CollectionProcessor()
@@ -391,8 +411,8 @@ class _FakeExecutor:
 
 
 def test_collection_processor_run_parallel_smoke_aggregates_patches(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     collection_root, xml_dir = _make_collection_layout(tmp_path, name="Port")
     (xml_dir / "alpha.xml").write_text("<xml/>", encoding="utf-8")
@@ -406,6 +426,10 @@ def test_collection_processor_run_parallel_smoke_aggregates_patches(
     def _fake_as_completed(futures: list[_FakeFuture]):
         return list(reversed(futures))
 
+    # Mock Soundslice folder check to prevent API calls in tests
+    def _fake_soundslice_check(folder_name: str) -> int:
+        return 12345  # Return a fake folder ID
+
     monkeypatch.setattr(
         processing_module,
         "ProcessPoolExecutor",
@@ -416,6 +440,12 @@ def test_collection_processor_run_parallel_smoke_aggregates_patches(
         ScoreProcessor,
         "process_single_score",
         staticmethod(_fake_process_single_score),
+    )
+
+    # Add this monkeypatch to prevent Soundslice API calls
+    monkeypatch.setattr(
+        "port.processing.check_soundslice_folder_exists",
+        _fake_soundslice_check,
     )
 
     cp = CollectionProcessor()

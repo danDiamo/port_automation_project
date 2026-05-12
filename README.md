@@ -98,7 +98,7 @@ To use it:
 
 2. Edit `.env` and fill in the values and credentials for your AWS and Soundslice accounts into the blank fields (this is essentially the same procedure as per the `.env` file in ITMA’s legacy Andy Dickson Collection pipeline implementation).
 
-Notes:
+**Notes:**
 
 - Treat `.env` content as private and sensitive.
 - If you provide or create a `.env` file, Port will read and use the embedded credentials by default.
@@ -156,7 +156,7 @@ Full processing (all workflows) for ONE score file selected by ITMA id / slug:
 --process all`
 
 
-Note: When selecting a score by `--itma-id`, the score file must exist inside the collection’s XML folder.
+**Note:** When selecting a score by `--itma-id`, the score file must exist inside the collection’s XML folder.
 
 ### B) Select a single score file by filepath (`--score-path`)
 
@@ -166,11 +166,62 @@ Full processing (all workflows) for ONE file selected by filepath:\
 --process all`
 
 
-Notes for both collection and score processing:
+**Notes:** (for both collection and score processing)
 
 - `--collection-root` is always required, even if only processing a single file.
 - Use quotes if any paths contain spaces, and check that the quotes are correctly formatted: they must be plain text (`"`) not formatted “curly” quotes.
 - Input files can be either `.xml` or `.musicxml`.
+
+## 5b. Re-processing Collections (Second and Subsequent Runs)
+
+After your first processing run, you may want to re-run Port to:
+- Regenerate derivatives (PDFs, SVGs, MP3s)
+- Recompute analysis data (key signatures, Breathnach codes)
+- Update Soundslice slices
+- Process newly added scores
+
+**IMPORTANT:** For second or subsequent runs, **OMIT** the `--metadata-csv` flag.
+
+When `--metadata-csv` is omitted, Port automatically loads the processed metadata file from your previous run (`collection_metadata_processed.csv`). This preserves all existing data while allowing you to update or regenerate selected outputs.
+
+### Examples
+
+**First run - provide raw metadata CSV:**
+
+```bash
+port run --collection-root "/path/to/CollectionRoot" \
+  --metadata-csv "/path/to/CollectionRoot/collection_metadata.csv" \
+  --process all
+```
+
+**Second run - regenerate all derivatives (omit `--metadata-csv`)** 
+
+```bash
+port run --collection-root "/path/to/CollectionRoot" \
+  --process derivatives
+```
+
+**Third run - recompute analysis data (omit `--metadata-csv`)**
+
+```bash
+port run --collection-root "/path/to/CollectionRoot" \
+  --process analysis
+```
+
+**Fourth run - update Soundslice slices (omit `--metadata-csv`)**
+
+```bash
+port run --collection-root "/path/to/CollectionRoot" \
+  --process soundslice
+```
+
+**Note:** You can also explicitly provide the processed CSV if needed, for example if the file has been renamed:
+
+```bash
+port run --collection-root "/path/to/CollectionRoot" \
+  --metadata-csv "/path/to/CollectionRoot/collection_metadata_processed.csv" \
+  --process derivatives
+```
 
 ## 6. Advanced functionality
 
@@ -207,7 +258,7 @@ Port can also run in parallel mode, per the following example. Caveat: this func
 --max-workers 8`
 
 
-Notes:
+**Notes:**
 
 - Start with `max-workers` equal to the number of local CPU cores and adjust if needed.
 - Parallel mode increases load on your machine and on any external tools invoked during derivative creation.
