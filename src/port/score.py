@@ -541,6 +541,20 @@ class Score:
         # copy in the time sig
         incipit.insert(0.0, copy.deepcopy(incipit_time_sig))
 
+        # Copy in the key signature from the topline
+        incipit_key_sig = (
+                selected_bars[0].keySignature
+                or selected_bars[0].getContextByClass(key.KeySignature)
+        )
+        if incipit_key_sig is None:
+            # Try to find key sig anywhere in the content
+            score_ks = content.recurse().getElementsByClass(key.KeySignature)
+            incipit_key_sig = score_ks[0] if score_ks else None
+
+        # Insert the key signature at the start of the incipit
+        if incipit_key_sig is not None:
+            incipit.insert(0.0, copy.deepcopy(incipit_key_sig))
+
         # Copy incipit content into new part & recalculate offsets.
         for el in topline.flatten().notesAndRests:
             o = float(el.offset)
