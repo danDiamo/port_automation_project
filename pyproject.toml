@@ -1,7 +1,7 @@
 [project]
 name = "port"
-version = "2.0.1"
-description = "Add your description here"
+version = "2.0.2"
+description = "Automatic processing of digital scores for ITMA's Port interface"
 requires-python = ">=3.13"
 dependencies = [
     "abc-xml-converter>=1.0.1",

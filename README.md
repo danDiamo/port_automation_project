@@ -1,23 +1,20 @@
 # Port (macOS Apple Silicon) - Command Line Tool
 
-**Package:** `Port-v2.0.1-macos-arm64.zip`
+**Package:** `Port-v2.0.2-macos-arm64.zip`
 
 This package contains a standalone `port` executable, with Python 3.13 and all local dependencies installed “under the hood” (the user does not need to install Python or manage dependencies).
 
 Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these tools are not installed, Port will warn at startup and skip the affected derivatives when running in default “all derivatives” mode.
 
-## Release notes for Port v2.0.1
+## Release notes for Port v2.0.2 (dev)
 
-- Soundslice slices now populate `title` from the `title` metadata field (previously used `federated_search_term`).
-- Content of `poet` and `composer` fields swapped in LilyPond PDF header output.
-- Fix implemented for run-on final lines of PDFs. This will need to be tested on real-life data and further tweaks may be required.
-- `--prompt-aws` no longer prompts for AWS region.
-- Metadata CSV output now captures public AWS URLs rather than URIs.
-- Guardrails added to ensure existing metadata content is not overwritten when running partial processing runs (for example: calling `--process bb_code` on a collection with existing metadata).
+- Flow control logic bugs affecting parallel processing have been fixed. README.md has been updated to reflect these changes (see section 5b).
+- Incipit svg images now include key signature and force inclusion of a treble clef only. 
+- Left-side incipit svg image padding has been decreased by 30px.
 
 ## 1. Install `port` so you can run it from any Terminal
 
-1. Unzip `Port-v2.0.1-macos-arm64.zip`.
+1. Unzip `Port-v2.0.2-macos-arm64.zip`.
    You will get a folder named `Port/`.
 
 2. Move the *entire* `Port/` folder to your user Applications directory (recommended):

@@ -19,7 +19,7 @@ from typing import Any
 # external imports
 import music21
 from dotenv import load_dotenv
-from music21 import bar, key, meter, note
+from music21 import bar, clef, key, meter, note
 from soundsliceapi import Client, Constants
 
 # local imports
@@ -565,6 +565,13 @@ class Score:
         # musicxml2ly.
         incipit.makeMeasures(inPlace=True)
 
+        # Remove any bass/alto clefs that may have been auto-inserted
+        # and ensure only treble clef persists
+        for element in incipit.recurse():
+            if (isinstance(element, clef.Clef)
+                    and not isinstance(element, clef.TrebleClef)):
+                element.activeSite.remove(element)
+
         # Renumber bars (and mark as explicit)
         for idx, bar in enumerate(
                 incipit.recurse().getElementsByClass(music21.stream.Measure),
@@ -1056,7 +1063,7 @@ class Score:
                     pad_top=1,
                     pad_right=0,
                     pad_bottom=0,
-                    pad_left=-10,  # Negative value trims left whitespace
+                    pad_left=-30,  # Negative value trims left whitespace
                 )
 
             return output_path

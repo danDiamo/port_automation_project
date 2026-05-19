@@ -438,39 +438,38 @@ def cleanup_lilypond_formatting(
             count=1,
         )
 
-    # Disable engravers responsible for printing unwanted elements.
-    ly_text += r"""
-\layout {
-  \context { \Staff \remove Instrument_name_engraver }
-  \context { \Score \remove Metronome_mark_engraver }
-}
-""".lstrip()
-
-    # Encourage approx. ~4 measures per line for PDF output (soft preference).
-    #
-    # This does NOT force line breaks and does NOT count measures.
-    # Instead, it slightly increases horizontal spacing so LilyPond tends to
-    # fit fewer measures per system.
-
-    if not suppress_header and "PORT_PDF_4_BARS_PER_LINE_SOFT" not in ly_text:
+        # Disable engravers responsible for printing unwanted elements.
         ly_text += r"""
-% PORT_PDF_4_BARS_PER_LINE_SOFT
-% Soft layout preference: encourage fewer measures per system (often ~4 for
-% simple single-staff tunes) by increasing horizontal spacing slightly.
-%
-% Compatible with multi-staff scores because it applies at the Score level.
-\layout {
-  \context {
-    \Score
-    \override SpacingSpanner.spacing-increment = #1.6
-  }
-}
-""".lstrip()
+    \layout {
+      \context { \Staff \remove Instrument_name_engraver }
+      \context { \Score \remove Metronome_mark_engraver }
+    }
+    """.lstrip()
 
-    # Insert source line at the end of the document (after the \score).
-    ly_text = _insert_collection_name_at_document_end(ly_text)
+        # Enforce adherence to explicit system breaks from music21
+        if not suppress_header and "PORT_PDF_BREAK_ALIGNMENT" not in ly_text:
+            ly_text += r"""
+    % PORT_PDF_BREAK_ALIGNMENT
+    % Strengthen explicit system breaks and discourage LilyPond from
+    % overriding them based on note density.
+    \layout {
+      \context {
+        \Score
+        % Increase the penalty for breaking anywhere except explicit breaks
+        \override NonMusicalPaperColumn.line-break-penalty = #10000
+        % Reduce spacing flexibility so measures don't compress/expand as much
+        \override SpacingSpanner.base-shortest-duration = #(ly:make-moment 1/16)
+        \override SpacingSpanner.spacing-increment = #1.2
+        % Set uniform spacing between barlines
+        \override SpacingSpanner.uniform-stretching = ##t
+      }
+    }
+    """.lstrip()
 
-    return ly_text
+        # Insert source line at the end of the document (after the \score).
+        ly_text = _insert_collection_name_at_document_end(ly_text)
+
+        return ly_text
 
 
 def pad_svg_file(
@@ -1240,6 +1239,7 @@ def build_export_score_for_lilypond(
       - Attempt StaffGroup preservation; skip it if we can't remap safely.
       - Warn once per score if we encounter any structural concern during
         normalization/remapping.
+      - Insert system breaks every 4 full measures to control PDF layout.
     """
     export_score = music21.stream.Score()
     default_time_sig = meter.TimeSignature(default_time_sig_str)
@@ -1324,6 +1324,15 @@ def build_export_score_for_lilypond(
 
         export_score.insert(0.0, sg_copy)
 
+    # ------------------------------------------------------------------
+    # Insert system breaks every 4 full measures
+    # ------------------------------------------------------------------
+    _insert_system_breaks_every_n_full_measures(
+        export_score=export_score,
+        default_time_sig=default_time_sig,
+        measures_per_line=4,
+    )
+
     if structural_concern:
         warnings.warn(
             f"Score {score_label}: structural normalization issues detected. "
@@ -1333,3 +1342,92 @@ def build_export_score_for_lilypond(
         )
 
     return export_score
+
+
+def _insert_system_breaks_every_n_full_measures(
+        *,
+        export_score: music21.stream.Score,
+        default_time_sig: meter.TimeSignature,
+        measures_per_line: int = 4,
+) -> None:
+    """
+    Insert system breaks (line breaks) every N full measures to control PDF layout.
+
+    Only counts "full" measures (bars whose duration matches the active time
+    signature). Skips incomplete bars (pickups, turnarounds, etc.).
+
+    Inserts breaks into the first part only (avoids redundancy in multi-staff
+    scores). Breaks are inserted at the start of every Nth full measure.
+
+    Special handling: Always adds a break after the first 4 full measures to ensure
+    the first line contains exactly 4 measures, then continues the regular pattern.
+
+    Args:
+        export_score: The normalized score ready for export
+        default_time_sig: Fallback time signature if none is found
+        measures_per_line: Number of full measures before inserting a break (default: 4)
+    """
+    parts = list(export_score.parts)
+    if not parts:
+        return
+
+    # Work with the first part only
+    first_part = parts[0]
+    measures = list(first_part.getElementsByClass(music21.stream.Measure))
+
+    if len(measures) <= measures_per_line:
+        # Score is too short to need breaks
+        return
+
+    full_measure_count = 0
+    first_line_break_inserted = False
+
+    for measure in measures:
+        # Determine if this is a full measure
+        time_sig = _active_time_signature(
+            bar=measure,
+            default_time_sig=default_time_sig,
+        )
+
+        expected_duration = float(time_sig.barDuration.quarterLength)
+        actual_duration = float(measure.duration.quarterLength)
+
+        # Check if this is a full measure (within tolerance)
+        is_full = actual_duration >= (expected_duration - _EPS_Q)
+
+        if is_full:
+            full_measure_count += 1
+
+            # Special case: Always insert break after the first 4 full measures
+            # to ensure the first line gets exactly 4 measures
+            if not first_line_break_inserted and full_measure_count == measures_per_line:
+                is_last_measure = (measure == measures[-1])
+                if not is_last_measure:
+                    # Insert break at the NEXT measure (which will be measure 5)
+                    # We'll handle this after we've seen measure 4
+                    first_line_break_inserted = True
+                    # Find the next measure after this one
+                    try:
+                        current_idx = measures.index(measure)
+                        if current_idx + 1 < len(measures):
+                            next_measure = measures[current_idx + 1]
+                            system_break = layout.SystemLayout(isNew=True)
+                            next_measure.insert(0.0, system_break)
+                    except (ValueError, IndexError):
+                        pass
+                continue
+
+            # Regular pattern: insert break every N full measures
+            # (starting from the second group of 4)
+            if first_line_break_inserted and full_measure_count % measures_per_line == 0:
+                is_last_measure = (measure == measures[-1])
+                if not is_last_measure:
+                    # Find the next measure
+                    try:
+                        current_idx = measures.index(measure)
+                        if current_idx + 1 < len(measures):
+                            next_measure = measures[current_idx + 1]
+                            system_break = layout.SystemLayout(isNew=True)
+                            next_measure.insert(0.0, system_break)
+                    except (ValueError, IndexError):
+                        pass
