@@ -34,7 +34,7 @@ RIGHT_MARGIN_MM = 12
 
 # LilyPond spacing settings (in staff spaces: 1 space ≈ 1.75mm ≈ 5 points)
 HEADER_TOP_VSPACE = 4  # Space above title
-HEADER_BOTTOM_VSPACE = 3  # Space between title and music
+HEADER_BOTTOM_VSPACE = 2  # Space between composer/tune type and music
 TOP_SYSTEM_SPACING_BASIC_DISTANCE = 12  # Top padding for pages 2+
 LAST_BOTTOM_SPACING_BASIC_DISTANCE = 14  # Bottom padding for last page
 
@@ -440,7 +440,7 @@ def configure_spacing(score: LilyPondScore) -> None:
 
 
 def apply_header_font(score: LilyPondScore) -> None:
-    """
+    r"""
     Apply Arial font to PDF header text.
 
     Inserts bookTitleMarkup with Arial override and disables scoreTitleMarkup
@@ -466,12 +466,13 @@ def apply_header_font(score: LilyPondScore) -> None:
     \\column {{{{
       \\vspace #{HEADER_TOP_VSPACE}
       \\fill-line {{{{ \\fontsize #6 \\fromproperty #'header:title }}}}
-      \\vspace #{HEADER_BOTTOM_VSPACE}
+      \\vspace #1
       \\fill-line {{{{
         \\fontsize #1
         \\fromproperty #'header:composer
         \\fromproperty #'header:poet
       }}}}
+      \\vspace #{HEADER_BOTTOM_VSPACE}
     }}}}
   }}}}
   scoreTitleMarkup = ##f"""
