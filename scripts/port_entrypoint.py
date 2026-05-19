@@ -130,6 +130,11 @@ def _compute_allowed_derivatives() -> tuple[list[str], list[str]]:
 
 
 def main() -> int:
+    # Must be called before any other imports or operations, otherwise we
+    # get a conflict between multiprocessing and Port CLI cmds
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     argv = sys.argv[1:]
 
     # Improve odds of finding Homebrew/legacy-installed tools.
