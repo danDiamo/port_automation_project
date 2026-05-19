@@ -152,7 +152,8 @@ echo
 # ---- Create zip (zip contains top-level Port/ folder) ----
 (
   cd "${OUT_DIR}"
-  /usr/bin/zip -r "../${ZIP_NAME}" "${APP_FOLDER_NAME}" >/dev/null
+  # Use -ry flags to preserve symlinks and recursively store with Unix permissions
+  /usr/bin/zip -ry "../${ZIP_NAME}" "${APP_FOLDER_NAME}" >/dev/null
 )
 
 echo "Done:"
