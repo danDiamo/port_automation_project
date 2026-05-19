@@ -671,12 +671,13 @@ class CollectionProcessor:
 
         # Check if Soundslice folder exists (only for modes that need it)
         soundslice_folder_id: int | None = None
-        if processing_steps.mode in {
-            ProcessingMode.SOUNDSLICE,
-            ProcessingMode.ALL
-        }:
-            soundslice_folder_id = check_soundslice_folder_exists(
-                context.collection_root.name)
+        # TEMP: Disabled Soundslice functionality due to external API issues
+        # if processing_steps.mode in {
+        #     ProcessingMode.SOUNDSLICE,
+        #     ProcessingMode.ALL
+        # }:
+        #     soundslice_folder_id = check_soundslice_folder_exists(
+        #         context.collection_root.name)
 
         metadata_patches: dict[str, dict[str, Any]] = {}
         has_metadata = metadata_csv_path is not None

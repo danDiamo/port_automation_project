@@ -6,11 +6,14 @@ This package contains a standalone `port` executable, with Python 3.13 and all l
 
 Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these tools are not installed, Port will warn at startup and skip the affected derivatives when running in default “all derivatives” mode.
 
-## Release notes for Port v2.0.2 (dev)
+## Release notes for Port v2.0.2
 
+- All Soundslice integration has been temporarily disabled, pending update of external API.
 - Flow control logic bugs affecting parallel processing have been fixed. README.md has been updated to reflect these changes (see section 5b).
 - Incipit svg images now include key signature and force inclusion of a treble clef only. 
 - Left-side incipit svg image padding has been decreased by 30px.
+- Top padding of score content has been increased for all pages in PDF outputs.
+- Persistent issue with overfull final lines in PDFs has been fixed.
 
 ## 1. Install `port` so you can run it from any Terminal
 
