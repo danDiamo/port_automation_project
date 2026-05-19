@@ -377,6 +377,56 @@ def _load_dotenv_from_executable_dir() -> None:
         load_dotenv(dotenv_path=dotenv_path, override=False)
 
 
+def _resolve_metadata_csv_path(
+        metadata_csv: Path,
+        collection_root: Path,
+) -> Path:
+    """
+    Resolve metadata CSV path intelligently:
+    - If absolute path is provided, use it as-is
+    - If relative path is provided, resolve it relative to collection root
+    - Support shell expansion (~/...)
+
+    Args:
+        metadata_csv: Path provided by user via --metadata-csv
+        collection_root: Collection root directory
+
+    Returns:
+        Resolved absolute Path to metadata CSV
+
+    Raises:
+        FileNotFoundError: If the resolved path doesn't exist
+    """
+    # Expand user home directory if present
+    csv_path = metadata_csv.expanduser()
+
+    # If it's already absolute, use it as-is
+    if csv_path.is_absolute():
+        resolved_path = csv_path.resolve()
+    else:
+        # Relative path - resolve relative to collection root
+        collection_root_resolved = collection_root.expanduser().resolve()
+        resolved_path = (collection_root_resolved / csv_path).resolve()
+
+    # Check if file exists and provide helpful error message
+    if not resolved_path.exists():
+        if csv_path.is_absolute():
+            raise FileNotFoundError(
+                f"Metadata CSV file not found at: {resolved_path}\n"
+                f"Please check the path and try again."
+            )
+        else:
+            raise FileNotFoundError(
+                f"Metadata CSV file not found.\n"
+                f"  Looking for: {csv_path}\n"
+                f"  In collection root: {collection_root.expanduser().resolve()}\n"
+                f"  Full path: {resolved_path}\n"
+                f"Please check the filename and try again."
+            )
+
+    return resolved_path
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     _load_dotenv_from_executable_dir()
@@ -418,6 +468,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.prompt_aws:
         _prompt_aws_credentials()
 
+    # Resolve metadata CSV path relative to collection root if needed
+    metadata_csv_path = None
+    if args.metadata_csv is not None:
+        metadata_csv_path = _resolve_metadata_csv_path(
+            args.metadata_csv,
+            args.collection_root
+        )
+
     processing_steps = ScoreProcessingOrchestrator(
         mode=mode,
         analysis_methods=args.analysis_method,
@@ -441,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
             collection_root=args.collection_root,
             selection=selection,
             processing_steps=processing_steps,
-            metadata_csv_path=args.metadata_csv,
+            metadata_csv_path=metadata_csv_path,
             save=not bool(args.no_save),
             progress=bar,
         )

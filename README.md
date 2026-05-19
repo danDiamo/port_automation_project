@@ -8,9 +8,10 @@ Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these t
 
 ## Release notes for Port v2.0.2
 
+- CLI changed to simplify metadata CSV input: --metadata_csv arg now requires a filename rather than a full absolute filepath.
 - All Soundslice integration has been temporarily disabled, pending update of external API.
 - Flow control logic bugs affecting parallel processing have been fixed. README.md has been updated to reflect these changes (see section 5b).
-- Incipit svg images now include key signature and force inclusion of a treble clef only. 
+- Incipit svg images now include key signature and force inclusion of a treble clef only.
 - Left-side incipit svg image padding has been decreased by 30px.
 - Top padding of score content has been increased for all pages in PDF outputs.
 - Persistent issue with overfull final lines in PDFs has been fixed.
@@ -124,26 +125,26 @@ This is a very secure, best-practice approach, but it is less convenient because
 
 Port requires the user to provide the path to a collection root directory to run. The user can also provide an optional metadata CSV file.
 
-If you do not have a metadata CSV, simply omit the `--metadata-csv` option and Port will generate one from scratch.
-
-If you provide a metadata CSV, it must be stored inside the collection root directory. It should be named per `<collection_root>_metadata.csv` (that is, for a collection root named `test_collection`, the CSV file should be named `test_collection_metadata.csv`).
+If you do provide a metadata CSV, it must be stored inside the collection root directory. It should be named per `<collection_root>_metadata.csv` (i.e. for a collection root named test_collection, the CSV file should be named `test_collection_metadata.csv`). 
 
 The metadata CSV file must contain a unique identifier column named `slug` (case-sensitive) containing a unique value for each score. Port will not be able to process the collection if this column is missing. Please see the Metadata Schema section below for more details on metadata formatting and management.
+
+If you do not have a metadata CSV, simply omit the `--metadata-csv` option and Port will generate one from scratch.
 
 **Important:** To ensure output derivatives/assets are written to the correct local and remote locations, input score XML files must be provided by the user in a single folder under the collection root named `<collection_root>_xml`.
 For example, for a collection root named `test_collection`, input score files should be stored in `test_collection/test_collection_xml`.
 
 ### Typical full collection processing run
 
-`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV"`
+`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv"`
 
 ### Creating derivatives/assets only
 
-`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process derivatives`
+`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" --process derivatives`
 
 ### Running musicological analyses only
 
-`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process analysis`
+`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" --process analysis`
 
 
 Port can also process single score files instead of a full collection. There are two ways to select a score for processing:
@@ -190,7 +191,7 @@ When `--metadata-csv` is omitted, Port automatically loads the processed metadat
 
 ```bash
 port run --collection-root "/path/to/CollectionRoot" \
-  --metadata-csv "/path/to/CollectionRoot/collection_metadata.csv" \
+  --metadata-csv "collection_metadata.csv" \
   --process all
 ```
 
@@ -215,11 +216,12 @@ port run --collection-root "/path/to/CollectionRoot" \
   --process soundslice
 ```
 
-**Note:** You can also explicitly provide the processed CSV if needed, for example if the file has been renamed:
+**Note:** You can bypass the automatic loading of metadata and explicitly provide an alternate metadata CSV if needed, for example if your metadata file has been renamed.
+This metadata csv must also be stored inside the collection root directory.
 
 ```bash
 port run --collection-root "/path/to/CollectionRoot" \
-  --metadata-csv "/path/to/CollectionRoot/collection_metadata_processed.csv" \
+  --metadata-csv "collection_metadata_renamed.csv" \
   --process derivatives
 ```
 
@@ -230,7 +232,7 @@ The examples below illustrate how to run individual steps of the processing pipe
 ### A) Run a single processing step for an entire collection
 
 For example, Soundslice only, with no analysis or derivatives:\
-`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process soundslice`
+`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" --process soundslice`
 
 
 ### B) Run two processing steps separately
@@ -240,19 +242,19 @@ Port’s CLI runs a single processing workflow per run (`analysis`, `soundslice`
 So the most reliable way to do bespoke combinations is via two separate Port runs:
 
 1) Compute bb_code only (analysis subset):\
-`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV"
+`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv"
 --process analysis
 --analysis-method bb_code`
 
 2) Upload to Soundslice only:
-`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV"
+`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv"
 --process soundslice`
 
 
 Port can also run in parallel mode, per the following example. Caveat: this functionality is still experimental/beta.
 
 ### C) Typical full collection run in parallel
-`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV"
+`port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv"
 --process all
 --parallel
 --max-workers 8`

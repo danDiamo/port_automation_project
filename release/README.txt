@@ -8,6 +8,7 @@ This package contains a standalone `port` executable, with Python 3.13 and all l
 Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these tools are not installed, Port will warn at startup and skip the affected derivatives when running in default "all derivatives" mode.
 
 Release notes for Port v2.0.2:
+- CLI changed to simplify metadata CSV input: --metadata_csv arg now requires a filename rather than a full absolute filepath.
 - All Soundslice integration has been temporarily disabled, pending update of external API.
 - Flow control logic bugs affecting parallel processing have been fixed. README.md has been updated to reflect these changes (see section 5b).
 - Incipit svg images now include key signature and force inclusion of a treble clef only.
@@ -121,13 +122,13 @@ B) Prompt via CLI (more secure; less convenient)
 5) Run Port
 ------------
 
-Port requires the user to provide the path to a collection root directory to run. The user can also provide an optional metadata CSV file.
+Port requires the user to provide the path to a collection root directory to run. The user can also provide an optional metadata CSV file. 
 
-If you don't have a metadata CSV, simply omit the `--metadata-csv` option and Port will generate one from scratch.
-
-If you provide a metadata CSV, it must be stored inside the collection root directory. It should be named per <collection_root>_metadata.csv (i.e. for a collection root named test_collection, the CSV file should be named test_collection_metadata.csv).
+If you do provide a metadata CSV, it must be stored inside the collection root directory. It should be named per <collection_root>_metadata.csv (i.e. for a collection root named test_collection, the CSV file should be named test_collection_metadata.csv). 
 
 The metadata CSV file must contain a unique identifier column named "slug" (case-sensitive) containing a unique value for each score. Port will not be able to process the collection if this column is missing. Please see the Metadata Schema section below for more details on metadata formatting & management.
+
+If you don't have a metadata CSV, simply omit the `--metadata-csv` option and Port will generate one from scratch.
 
 IMPORTANT: To ensure output derivaives/assets are written to the correct local and remote locations, input score xml files must be provided by the user in a single folder under the collection root named per: "<collection_root>_xml"
 (i.e. for a collection root named test_collection, input score files should be stored in test_collection/test_collection_xml subfolder).
@@ -135,15 +136,15 @@ IMPORTANT: To ensure output derivaives/assets are written to the correct local a
 
 Typical full collection processing run:
 
-  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV"
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv"
 
 Creating derivatives/assets only:
 
-  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process derivatives
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" --process derivatives
 
 Running musicological analyses only:
 
-  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process analysis
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" --process analysis
 
 
 Port can also process single score files instead of a full collection. There are two ways to select a score for processing:
@@ -189,7 +190,7 @@ Examples:
   First run - provide raw metadata CSV:
 
     port run --collection-root "/path/to/CollectionRoot" \
-      --metadata-csv "/path/to/CollectionRoot/collection_metadata.csv" \
+      --metadata-csv "collection_metadata.csv" \
       --process all
 
   Second run - regenerate all derivatives (omit --metadata-csv):
@@ -207,11 +208,13 @@ Examples:
     port run --collection-root "/path/to/CollectionRoot" \
       --process soundslice
 
-Note: You can also explicitly provide the processed CSV if needed, for example if the file has been renamed:
+Note: You can bypass the automatic loading of metadata and explicitly provide an alternate metadata CSV if needed, for example if your metadata file has been renamed.
+This metadata csv must also be stored inside the collection root directory.
 
   port run --collection-root "/path/to/CollectionRoot" \
-    --metadata-csv "/path/to/CollectionRoot/collection_metadata_processed.csv" \
+    --metadata-csv "collection_metadata_renamed.csv" \
     --process derivatives
+
 
 --------------------------
 6) Advanced functionality
@@ -221,7 +224,7 @@ The examples below illustrate how to run individual steps of the processing pipe
 
 A) If you want to run a single processing step, for example Soundslice ONLY (no analysis / no derivatives), on an entire collection:
 
-  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" --process soundslice
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" --process soundslice
 
 B) If you want to select and run two processing steps, for example, Breathnach codes (bb_code) plus Soundslice:
 
@@ -229,19 +232,19 @@ Port’s CLI runs a single processing workflow per run (analysis OR Soundslice O
 So the most reliable way to do bespoke combinations like this is via two separate Port runs:
 
   # 1) Compute bb_code only (analysis subset):
-  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" \
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" \
     --process analysis \
     --analysis-method bb_code
 
   # 2) Upload to Soundslice only:
-  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" \
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" \
     --process soundslice
 
  Port can also run in parallel mode, per the following example. Caveat: This functionality is still experimental/beta.
 
 C) Typical full collection run in parallel:
 
-  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "/path/to/MetadataCSV" \
+  port run --collection-root "/path/to/CollectionRoot" --metadata-csv "collection_metadata.csv" \
     --process all \
     --parallel \
     --max-workers 8
@@ -307,7 +310,7 @@ Workflow selection:
 
 Metadata I/O:
   --metadata-csv <PATH>
-      Optional input metadata CSV path (must be stored inside collection root directory).
+      Optional input metadata CSV file name (must be stored inside collection root directory).
 
   	  By default, whether metadata is provided or not, Port will generate a new metadata CSV named per <collection_root>_processed.csv. If a metadata CSV is provided, it will have new columns and content added to record the various outputs and derivatives created by Port. If a metadata CSV is not provided, Port will generate one from scratch and record the same output columns & content.
 
