@@ -7,7 +7,7 @@ Handles:
 - Pickup/anacrusis detection and alignment
 - Barline preservation (repeats, double bars, finals)
 - Volta/repeat bracket preservation
-- Time signature and clef/key context copying
+- Time signature and clef/key context management
 
 Note: This module is not currently unit tested directly but is used by tests in
 test_score.py.
@@ -26,13 +26,13 @@ from music21 import bar, clef, key, meter, layout, spanner
 # Configuration Constants
 # ============================================================================
 
-# quarterLength tolerance for "incomplete bar" comparisons
+# quarterLength tolerance for "ncomplete bar detection
 EPS_Q = 1e-6
 
 # Small negative offsets to keep grace notes ordered before their anchor notes
 GRACE_ANCHOR_EPS = 1e-4
 
-# Default number of measures per line in PDF layout
+# Default number of bars per line in PDF layout
 MEASURES_PER_LINE = 4
 
 
@@ -46,7 +46,7 @@ def _active_time_signature(
         default_time_sig: meter.TimeSignature,
 ) -> meter.TimeSignature:
     """
-    Resolve the active time signature for `bar`.
+    Resolve the time signature for `bar`.
 
     Prefer an explicit time signature, otherwise use Music21 context lookup,
     and finally fall back to the project's default time signature.

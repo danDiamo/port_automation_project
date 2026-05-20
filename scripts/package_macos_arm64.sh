@@ -114,6 +114,41 @@ uv run pyinstaller \
   --specpath "${WORK_DIR}/spec" \
   scripts/port_entrypoint.py
 
+# ---- Ad-hoc Code Signing (bug fix for Python 3.13 + PyInstaller 6.x) ----
+echo "Applying code signatures to prevent Gatekeeper blocks..."
+
+APP_BUNDLE="${WORK_DIR}/dist/${EXE_NAME}"
+
+# Sign the Python framework specifically (this is what's failing)
+if [[ -d "${APP_BUNDLE}/_internal/Python.framework" ]]; then
+  echo "  Signing Python.framework..."
+  codesign --force --deep --sign - "${APP_BUNDLE}/_internal/Python.framework" 2>/dev/null || true
+fi
+
+# Sign the Python dylib if it exists as a standalone file
+if [[ -f "${APP_BUNDLE}/_internal/Python" ]]; then
+  echo "  Signing Python dylib..."
+  codesign --force --sign - "${APP_BUNDLE}/_internal/Python" 2>/dev/null || true
+fi
+
+# Sign all other dylibs and .so files
+echo "  Signing all .dylib and .so files..."
+find "${APP_BUNDLE}/_internal" -type f \( -name "*.dylib" -o -name "*.so" \) \
+  -exec codesign --force --sign - {} \; 2>/dev/null || true
+
+# Sign the main executable last
+echo "  Signing main executable..."
+codesign --force --sign - "${APP_BUNDLE}/${EXE_NAME}" 2>/dev/null || true
+
+# Verify the signature
+if codesign --verify --verbose=4 "${APP_BUNDLE}/${EXE_NAME}" 2>&1 | grep -q "valid on disk"; then
+  echo "  ✓ Code signing complete"
+else
+  echo "  ⚠ Warning: Signature verification returned warnings (may still work)"
+fi
+
+echo
+
 # ---- Assemble deliverable folder Port/ ----
 mkdir -p "${OUT_DIR}/${APP_FOLDER_NAME}"
 
