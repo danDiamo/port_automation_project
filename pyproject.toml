@@ -1,6 +1,6 @@
 [project]
 name = "port"
-version = "2.0.3"
+version = "2.0.4"
 description = "Automatic processing of digital scores for ITMA's Port interface"
 requires-python = ">=3.13"
 dependencies = [
@@ -10,7 +10,7 @@ dependencies = [
     "pandas>=2.3.3",
     "pypdf>=6.7.0",
     "python-dotenv>=1.2.1",
-    "soundsliceapi>=1.1",
+    "soundsliceapi==1.2",
     "tqdm>=4.66.0",
 ]
 
@@ -27,6 +27,11 @@ dev = [
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

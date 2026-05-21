@@ -408,6 +408,9 @@ def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
     """Soundslice unit test: no network. Verifies mock client calls & returned
     scorehash identifier."""
 
+    # Clear the shared list cache to ensure clean test state
+    Score._soundslice_list_id_cache.clear()
+
     # Create a temp collection folder and copy a real MusicXML file into it
     collection_root = tmp_path / "Test_Collection"
     collection_root.mkdir()
@@ -428,7 +431,8 @@ def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
         # Mocks Soundslice constants
         EMBED_STATUS_ON_ALLOWLIST = 999
 
-    calls = {"create_slice": [], "upload": []}
+    calls = {"create_slice": [], "upload": [], "create_list": [],
+             "add_slices_to_list": []}
 
     class FakeClient:
         # Mocks Soundslice client connections
@@ -439,6 +443,8 @@ def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
 
         def create_slice(self, **kwargs):
             calls["create_slice"].append(kwargs)
+            # v1.2 API: no folder_id parameter
+            assert "folder_id" not in kwargs
             return {
                 "scorehash": "scorehash_123",
                 "embed_url": "/slices/scorehash_123/embed/",
@@ -451,17 +457,20 @@ def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
             assert len(chunk) > 0
             calls["upload"].append({"scorehash": scorehash})
 
-        def list_folders(self):
-            raise AssertionError(
-                "list_folders() should not be called when _folder_id is "
-                "provided"
-            )
+    # Mock the utility functions
+    def mock_create_soundslice_list(collection_name: str) -> str:
+        calls["create_list"].append(collection_name)
+        return "test_list_123"
 
-        def create_folder(self, name: str):
-            raise AssertionError(
-                "create_folder() should not be called when _folder_id is "
-                "provided"
-            )
+    def mock_add_slices_to_soundslice_list(
+            list_id: str,
+            scorehashes: list[str]
+    ) -> bool:
+        calls["add_slices_to_list"].append({
+            "list_id": list_id,
+            "scorehashes": scorehashes,
+        })
+        return True
 
     # use pytest's built-in mocking
     monkeypatch.setattr(
@@ -475,26 +484,185 @@ def test_create_soundslice_slice_and_get_embed_id_unit(tmp_path, monkeypatch):
 
     monkeypatch.setattr(score_module, "Client", FakeClient)
     monkeypatch.setattr(score_module, "Constants", FakeConstants)
+    monkeypatch.setattr(
+        score_module,
+        "create_soundslice_list",
+        mock_create_soundslice_list,
+    )
+    monkeypatch.setattr(
+        score_module,
+        "add_slices_to_soundslice_list",
+        mock_add_slices_to_soundslice_list,
+    )
 
     # run
     embed = test_score.create_soundslice_slice(
         collection_metadata=FakeCollectionMetadata(),
         itma_id="unit-slug",
-        _folder_id=123,
     )
 
     # Asserts
     assert embed == "scorehash_123"
-    assert len(calls["create_slice"]) == 1
-    assert len(calls["upload"]) == 1
 
+    # Check list was created
+    assert len(calls["create_list"]) == 1
+    assert calls["create_list"][0] == "Test_Collection"
+
+    # Check slice was created
+    assert len(calls["create_slice"]) == 1
     kwargs = calls["create_slice"][0]
     assert kwargs["name"] == "Unit Test Title (Catalogue)"
     assert kwargs["artist"] == ""  # intentionally left blank
-    assert kwargs["folder_id"] == 123
+    assert "folder_id" not in kwargs  # v1.2 API change
     assert kwargs["has_shareable_url"] is True
     assert kwargs["can_print"] is True
     assert kwargs["embed_status"] == FakeConstants.EMBED_STATUS_ON_ALLOWLIST
+
+    # Check upload happened
+    assert len(calls["upload"]) == 1
+
+    # Check slice was added to list
+    assert len(calls["add_slices_to_list"]) == 1
+    assert calls["add_slices_to_list"][0]["list_id"] == "test_list_123"
+    assert calls["add_slices_to_list"][0]["scorehashes"] == ["scorehash_123"]
+
+
+def test_create_soundslice_slice_with_provided_folder_id_and_title(
+        tmp_path,
+        monkeypatch
+):
+    """
+    Unit test using mocked Soundslice client to verify:
+      - Client connection
+      - slice creation (v1.2 API - no folder_id)
+      - list creation
+      - slice addition to list
+      - MusicXML upload
+      - embed URL return
+
+    This test mocks the Client so Soundslice credentials are not required.
+    """
+
+    # Note: we should ideally inject _folder_id from CLI flow control
+    # but for flexibility during unit testing we allow manual param passing
+    collection_root = tmp_path / "unit-test-collection"
+    collection_root.mkdir()
+
+    test_score_path = collection_root / happy_testfile.name
+    shutil.copy(happy_testfile, test_score_path)
+    #
+    test_score = Score(test_score_path, collection_root=collection_root)
+
+    class FakeCollectionMetadata:
+        def get_score_metadata(self, itma_id: str) -> dict:
+            assert itma_id == "unit-slug"
+            return {
+                "title": "Unit Test Title (Catalogue)",
+                "federated_search_term": "Unit Test Title (Federated)",
+            }
+
+    class FakeConstants:
+        # Mocks Soundslice constants
+        EMBED_STATUS_ON_ALLOWLIST = 999
+
+    calls = {
+        "create_slice": [],
+        "upload": [],
+        "create_list": [],
+        "add_slices_to_list": [],
+    }
+
+    class FakeClient:
+        # Mocks Soundslice client connections
+        def __init__(self, application_id: str, password: str):
+            # Ensure unit test does not use real env creds
+            assert application_id == "APPLICATION_ID_PLACEHOLDER"
+            assert password == "PASSWORD_PLACEHOLDER"
+
+        def create_slice(self, **kwargs):
+            calls["create_slice"].append(kwargs)
+            # v1.2 API: no folder_id parameter
+            assert "folder_id" not in kwargs
+            return {
+                "scorehash": "scorehash_123",
+                "embed_url": "/slices/scorehash_123/embed/",
+            }
+
+        def upload_slice_notation(self, *, scorehash: str, fp):
+            chunk = fp.read(32)
+            assert scorehash == "scorehash_123"
+            assert isinstance(chunk, (bytes, bytearray))
+            assert len(chunk) > 0
+            calls["upload"].append({"scorehash": scorehash})
+
+    # Mock the utility functions
+    def mock_create_soundslice_list(collection_name: str) -> str:
+        calls["create_list"].append(collection_name)
+        return "test_list_123"
+
+    def mock_add_slices_to_soundslice_list(
+        list_id: str, 
+        scorehashes: list[str]
+    ) -> bool:
+        calls["add_slices_to_list"].append({
+            "list_id": list_id,
+            "scorehashes": scorehashes,
+        })
+        return True
+
+    # use pytest's built-in mocking
+    monkeypatch.setattr(
+        score_module,
+        "get_soundslice_credentials_from_env",
+        lambda: (
+            "APPLICATION_ID_PLACEHOLDER",
+            "PASSWORD_PLACEHOLDER",
+        ),
+    )
+
+    monkeypatch.setattr(score_module, "Client", FakeClient)
+    monkeypatch.setattr(score_module, "Constants", FakeConstants)
+    monkeypatch.setattr(
+        score_module,
+        "create_soundslice_list",
+        mock_create_soundslice_list,
+    )
+    monkeypatch.setattr(
+        score_module,
+        "add_slices_to_soundslice_list",
+        mock_add_slices_to_soundslice_list,
+    )
+
+    # run
+    embed = test_score.create_soundslice_slice(
+        collection_metadata=FakeCollectionMetadata(),
+        itma_id="unit-slug",
+    )
+
+    # Asserts
+    assert embed == "scorehash_123"
+    
+    # Check list was created
+    assert len(calls["create_list"]) == 1
+    assert calls["create_list"][0] == "unit-test-collection"
+    
+    # Check slice was created
+    assert len(calls["create_slice"]) == 1
+    kwargs = calls["create_slice"][0]
+    assert kwargs["name"] == "Unit Test Title (Catalogue)"
+    assert kwargs["artist"] == ""  # intentionally left blank
+    assert "folder_id" not in kwargs  # v1.2 API change
+    assert kwargs["has_shareable_url"] is True
+    assert kwargs["can_print"] is True
+    assert kwargs["embed_status"] == FakeConstants.EMBED_STATUS_ON_ALLOWLIST
+    
+    # Check upload happened
+    assert len(calls["upload"]) == 1
+    
+    # Check slice was added to list
+    assert len(calls["add_slices_to_list"]) == 1
+    assert calls["add_slices_to_list"][0]["list_id"] == "test_list_123"
+    assert calls["add_slices_to_list"][0]["scorehashes"] == ["scorehash_123"]
 
 # ==============================================================================
 # INTEGRATION TESTS (AWS & File System)
@@ -605,10 +773,11 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
 ):
     """
     Integration test (runs on real Soundslice API):
-      - creates a unique folder
+      - creates a unique list
       - creates a slice and uploads the MusicXML
+      - adds slice to list
       - returns an embed URL
-      - cleans up slice & folder
+      - cleans up slice & list
 
     To run this test, set the following environment variables in .env.template:
       RUN_SOUNDSLICE_INTEGRATION_TESTING=y
@@ -626,8 +795,8 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
                     "Set APPLICATION_ID and PASSWORD in .env.template.")
 
     # set up temp local paths
-    folder_name = f"PYTEST_{secrets.token_hex(8)}"
-    collection_root = tmp_path / folder_name
+    list_name = f"PYTEST_{secrets.token_hex(8)}"
+    collection_root = tmp_path / list_name
     collection_root.mkdir()
 
     score_path = collection_root / happy_testfile.name
@@ -639,9 +808,9 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
         def get_score_metadata(self, itma_id: str) -> dict:
             return {"title": f"Pytest Slice {itma_id}"}
 
-    created = {"folder_id": None, "scorehash": None}
+    created = {"list_id": None, "scorehash": None}
 
-    #setup Soundslice Client
+    # setup Soundslice Client
     RealClient = score_module.Client
 
     # Class to manage Soundslice API interactions
@@ -649,14 +818,14 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
         def __init__(self, application_id: str, password: str):
             self._real = RealClient(application_id, password)
 
-        def list_folders(self):
-            return self._real.list_folders()
-
-        def create_folder(self, name: str):
-            return self._real.create_folder(name=name)
+        def create_list(self, name: str):
+            resp = self._real.create_list(name=name)
+            created["list_id"] = resp.get("id")
+            return resp
 
         def create_slice(self, **kwargs):
-            created["folder_id"] = kwargs.get("folder_id")
+            # v1.2 API: no folder_id
+            assert "folder_id" not in kwargs
             resp = self._real.create_slice(**kwargs)
             created["scorehash"] = resp.get("scorehash")
             return resp
@@ -664,20 +833,49 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
         def upload_slice_notation(self, *, scorehash: str, fp):
             return self._real.upload_slice_notation(scorehash=scorehash, fp=fp)
 
+        def add_slices_to_list(self, list_id: str, scorehashes: list[str]):
+            return self._real.add_slices_to_list(
+                list_id=list_id,
+                scorehashes=scorehashes,
+            )
+
         def delete_slice(self, scorehash: str):
             return self._real.delete_slice(scorehash)
 
-        def delete_folder(self, *, folder_id: int):
-            return self._real.delete_folder(folder_id=folder_id)
+        # Not possible in Soundslice API v1.2
+        # def delete_list(self, list_id: str):
+        #     return self._real.delete_list(list_id=list_id)
+
+    # Mock utility functions to use capturing client
+    def mock_create_list(collection_name: str) -> str:
+        app_id, pwd = score_module.get_soundslice_credentials_from_env()
+        client = CapturingClient(app_id, pwd)
+        resp = client.create_list(name=collection_name)
+        return resp.get("id")
+
+    def mock_add_to_list(list_id: str, scorehashes: list[str]) -> bool:
+        app_id, pwd = score_module.get_soundslice_credentials_from_env()
+        client = CapturingClient(app_id, pwd)
+        client.add_slices_to_list(list_id, scorehashes)
+        return True
 
     monkeypatch.setattr(score_module, "Client", CapturingClient)
+    monkeypatch.setattr(
+        score_module,
+        "create_soundslice_list",
+        mock_create_list,
+    )
+    monkeypatch.setattr(
+        score_module,
+        "add_slices_to_soundslice_list",
+        mock_add_to_list,
+    )
 
     # run test
     try:
         embed = score.create_soundslice_slice(
             collection_metadata=FakeCollectionMetadata(),
             itma_id="integration-slug",
-            _folder_id=None,
         )
         # check form of scorehash returned
         assert isinstance(embed, str)
@@ -693,10 +891,9 @@ def test_create_soundslice_slice_and_get_embed_url_integration(
             if created.get("scorehash"):
                 cleanup_client.delete_slice(created["scorehash"])
 
-            if created.get("folder_id"):
-                cleanup_client.delete_folder(
-                    folder_id=int(created["folder_id"])
-                )
+            # Not possible with Soundslice API v1.2
+            # if created.get("list_id"):
+            #     cleanup_client.delete_list(list_id=created["list_id"])
 
         except Exception as cleanup_err:
             print(f"Soundslice cleanup warning (non-fatal): {cleanup_err}")

@@ -8,8 +8,8 @@ This package contains a standalone `port` executable, with Python 3.13 and all l
 Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these tools are not installed, Port will warn at startup and skip the affected derivatives when running in default "all derivatives" mode.
 
 Release notes for Port v2.0.3:
+- Soundslice integration rebuilt using their new v1.2 API.
 - CLI changed to simplify metadata CSV input: --metadata_csv arg now requires a filename (including ‘.csv’ suffix) rather than a full absolute filepath.
-- All Soundslice integration has been temporarily disabled, pending update of external API.
 - Flow control logic bugs affecting partial processing runs have been fixed. README.md has been updated to reflect these changes (see section 5b).
 - Incipit svg images now include key signature and force inclusion of a treble clef.
 - Left-side incipit svg image padding has been decreased by 30px.

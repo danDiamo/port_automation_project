@@ -7,6 +7,7 @@ test_score.py.
 from __future__ import annotations
 
 import os
+import warnings
 
 from soundsliceapi import Client as SoundsliceClient
 
@@ -31,56 +32,87 @@ def get_soundslice_credentials_from_env() -> tuple[str, str]:
     return app_id, pwd
 
 
-def check_soundslice_folder_exists(folder_name: str) -> int:
+def create_soundslice_list(collection_name: str) -> str | None:
     """
-    Check that a Soundslice folder exists and return its id.
-
-    Fail-fast:
-      - Raises error on API/credential/permission errors.
-      - Tolerates parallel processing race case where another
-        process created the folder first, then re-lists to obtain folder id.
+    Create a Soundslice list for a collection.
+    
+    Args:
+        collection_name: Name for the list (typically collection_root.name)
+    
+    Returns:
+        list_id as string, or None if creation fails
     """
-    folder_name = str(folder_name).strip()
-    if not folder_name:
-        raise ValueError("folder_name must be a non-empty string.")
-
-    application_id, password = get_soundslice_credentials_from_env()
-    client = SoundsliceClient(application_id, password)
-
-    def _find_folder_id() -> int | None:
-        for f in client.list_folders():
-            if f.get("name") == folder_name:
-                fid = f.get("id")
-                return int(fid) if fid is not None else None
+    collection_name = str(collection_name).strip()
+    if not collection_name:
+        warnings.warn(
+            "Cannot create Soundslice list: collection name is blank/empty.",
+            UserWarning,
+        )
+        return None
+    
+    try:
+        application_id, password = get_soundslice_credentials_from_env()
+        client = SoundsliceClient(application_id, password)
+        
+        response = client.create_list(name=collection_name)
+        list_id = response.get("id")
+        
+        if not list_id:
+            warnings.warn(
+                f"Soundslice API did not return list_id for '{collection_name}'.",
+                UserWarning,
+            )
+            return None
+        
+        return str(list_id)
+    
+    except Exception as e:
+        warnings.warn(
+            f"Failed to create Soundslice list '{collection_name}': {e}",
+            UserWarning,
+        )
         return None
 
-    folder_id = _find_folder_id()
-    if folder_id is not None:
-        return folder_id
 
+def add_slices_to_soundslice_list(
+    list_id: str, 
+    scorehashes: list[str]
+) -> bool:
+    """
+    Add multiple slices to a Soundslice list in one batch operation.
+    
+    Args:
+        list_id: The Soundslice list ID
+        scorehashes: List of scorehash strings to add
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    if not list_id or not isinstance(list_id, str):
+        warnings.warn(
+            "Cannot add slices to list: list_id is invalid.",
+            UserWarning,
+        )
+        return False
+    
+    if not scorehashes:
+        # Nothing to add - this is not an error
+        return True
+    
     try:
-        client.create_folder(name=folder_name)
+        application_id, password = get_soundslice_credentials_from_env()
+        client = SoundsliceClient(application_id, password)
+        
+        client.add_slices_to_list(
+            list_id=list_id,
+            scorehashes=scorehashes,
+        )
+        
+        return True
+    
     except Exception as e:
-        msg = str(e).lower()
-        race_ok = any(
-            needle in msg
-            for needle in (
-                "already exists",
-                "already have",
-                "duplicate",
-                "conflict",
-                "409",
-            )
+        warnings.warn(
+            f"Failed to add {len(scorehashes)} slice(s) to Soundslice list: {e}",
+            UserWarning,
         )
-        if not race_ok:
-            raise RuntimeError(
-                f"Failed to create Soundslice folder '{folder_name}': {e}"
-            ) from e
-
-    folder_id = _find_folder_id()
-    if folder_id is None:
-        raise RuntimeError(
-            f"Failed to resolve Soundslice folder id for '{folder_name}'."
-        )
-
-    return folder_id
+        return False

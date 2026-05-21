@@ -25,7 +25,6 @@ from typing import Any
 from .metadata import CollectionMetadata
 from .score import Score
 from .utils.aws_utils import copy_mp3_to_aws
-from .utils.soundslice_utils import check_soundslice_folder_exists
 
 
 def _get_itma_id_from_path(score_path: Path) -> str:
@@ -114,7 +113,6 @@ def _single_score_score_worker(
     mode: str,
     analysis_methods: list[str] | None,
     derivative_methods: list[str] | None,
-    soundslice_folder_id: int | None,
     score_metadata: dict[str, dict[str, str]] | None,
     has_metadata: bool,
 ) -> dict[str, dict[str, Any]]:
@@ -153,7 +151,6 @@ def _single_score_score_worker(
         context=context,
         processing_steps=processing_steps,
         collection_metadata=metadata_lookup,
-        soundslice_folder_id=soundslice_folder_id,
         custom_title=None,
         has_metadata=has_metadata,
     )
@@ -280,7 +277,6 @@ class ScoreProcessor:
         context: CollectionContext,
         processing_steps: ScoreProcessingOrchestrator,
         collection_metadata: CollectionMetadata | None = None,
-        soundslice_folder_id: int | None = None,
         custom_title: str | None = None,
         has_metadata: bool | None = None,
     ) -> dict[str, dict[str, Any]]:
@@ -306,7 +302,6 @@ class ScoreProcessor:
                 itma_id=itma_id,
                 context=context,
                 processing_steps=processing_steps,
-                soundslice_folder_id=soundslice_folder_id,
             )
         )
         return {itma_id: score_metadata_patch}
@@ -318,7 +313,6 @@ class ScoreProcessor:
         itma_id: str,
         context: CollectionContext,
         processing_steps: ScoreProcessingOrchestrator,
-        soundslice_folder_id: int | None,
     ) -> dict[str, Any]:
         """
         Run the selected processing steps for a score and return a metadata
@@ -366,7 +360,6 @@ class ScoreProcessor:
                 self._run_soundslice_step(
                     score=score,
                     itma_id=itma_id,
-                    soundslice_folder_id=soundslice_folder_id,
                 )
             )
 
@@ -460,12 +453,12 @@ class ScoreProcessor:
             *,
             score: Score,
             itma_id: str,
-            soundslice_folder_id: int | None,
     ) -> dict[str, Any]:
+        """Create slice, add to list, and return scorehash."""
+
         embed_id = score.create_soundslice_slice(
             collection_metadata=None,  # title already on Score.title
             itma_id=itma_id,
-            _folder_id=soundslice_folder_id,
         )
         return {"soundslice_iframe": embed_id} if embed_id else {}
 
@@ -669,16 +662,6 @@ class CollectionProcessor:
                     f"Metadata is missing for score file(s): {preview}{suffix}"
                 )
 
-        # Check if Soundslice folder exists (only for modes that need it)
-        soundslice_folder_id: int | None = None
-        # TEMP: Disabled Soundslice functionality due to external API issues
-        # if processing_steps.mode in {
-        #     ProcessingMode.SOUNDSLICE,
-        #     ProcessingMode.ALL
-        # }:
-        #     soundslice_folder_id = check_soundslice_folder_exists(
-        #         context.collection_root.name)
-
         metadata_patches: dict[str, dict[str, Any]] = {}
         has_metadata = metadata_csv_path is not None
 
@@ -700,7 +683,6 @@ class CollectionProcessor:
                     context=context,
                     processing_steps=processing_steps,
                     collection_metadata=metadata_lookup_adapter,
-                    soundslice_folder_id=soundslice_folder_id,
                     custom_title=None,
                     has_metadata=has_metadata,
                 )
@@ -724,7 +706,6 @@ class CollectionProcessor:
                         mode=str(processing_steps.mode.value),
                         analysis_methods=processing_steps.analysis_methods,
                         derivative_methods=processing_steps.derivative_methods,
-                        soundslice_folder_id=soundslice_folder_id,
                         score_metadata=metadata_lookup,
                         has_metadata=has_metadata,
                     )

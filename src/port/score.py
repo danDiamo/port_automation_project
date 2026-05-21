@@ -31,7 +31,11 @@ from .utils.pdf_utils import (
     cleanup_lilypond_formatting,
     pad_svg_file
 )
-from .utils.soundslice_utils import get_soundslice_credentials_from_env
+from .utils.soundslice_utils import (
+    get_soundslice_credentials_from_env,
+    create_soundslice_list,
+    add_slices_to_soundslice_list
+)
 
 # Load .env.template to access API credentials
 load_dotenv()
@@ -86,7 +90,6 @@ def sync_to_s3(func):
 
 
 class Score:
-    # TODO: custom repr via title?
 
     """
     Score class object represents a digital music score encoded as a MusicXML
@@ -114,9 +117,8 @@ class Score:
     # requirements
     DEFAULT_TIME_SIG = "4/4"
 
-    # shared cache to track Soundslice folder IDs for all Score class
-    # instances
-    _soundslice_folder_id_cache: dict[str, int] = {}
+    # Shared cache to track Soundslice list IDs for all Score class instances
+    _soundslice_list_id_cache: dict[str, str] = {}
 
     def __init__(self, score_path, collection_root=None):
 
@@ -1275,17 +1277,14 @@ class Score:
             collection_metadata,
             itma_id: str,
             title: str | None = None,
-            _folder_id: int | None = None,
     ) -> str | None:
         """
-        Create a slice in the collection's Soundslice folder, adds MusicXML,
-        and return the Soundslice embed URL string.
+        Create a Soundslice slice, upload MusicXML, and add to collection list.
+
+        Handles list creation automatically (with caching for parallel safety).
 
         Returns:
-            embed_id (scorehash) as a string, or None if creation/upload fails.
-
-        If _folder_id is provided, no list_folders() calls are made to the
-        Soundslice API (safe for parallel processing).
+            scorehash as a string, or None if creation/upload fails.
         """
 
         # validate score id
@@ -1340,64 +1339,26 @@ class Score:
             )
             return None
 
-        folder_name = self.collection_root.name
-        application_id, password = get_soundslice_credentials_from_env()
-        client = Client(application_id, password)
+        collection_name = self.collection_root.name
 
-        # Manage folder id lookups via class-level cache
-        folder_id: int | None = _folder_id
-        if folder_id is None:
-            folder_id = self._soundslice_folder_id_cache.get(folder_name)
-
-        # Resolve folder ID; create Soundslice folder if needed
-        if folder_id is None:
-            def _find_folder_id() -> int | None:
-                for f in client.list_folders():
-                    if f.get("name") == folder_name:
-                        fid = f.get("id")
-                        return int(fid) if fid is not None else None
-                return None
-
-            folder_id = _find_folder_id()
-            # manage folder creation for parallel processing
-            if folder_id is None:
-                try:
-                    client.create_folder(name=folder_name)
-                except Exception as e:
-                    # Fail fast EXCEPT for the expected parallel race case.
-                    msg = str(e).lower()
-                    race_ok = any(
-                        needle in msg
-                        for needle in (
-                            "already exists",
-                            "already have",
-                            "duplicate",
-                            "conflict",
-                            "409",
-                        )
-                    )
-                    if not race_ok:
-                        warnings.warn(
-                            f"Failed to create Soundslice folder '{folder_name}'. "
-                            "Skipping this processing step. "
-                            f"Error: {e}",
-                            UserWarning,
-                        )
-                        return None
-
-                folder_id = _find_folder_id()
-
-            if folder_id is None:
+        # Get or create list for this collection
+        list_id = self._soundslice_list_id_cache.get(collection_name)
+        if list_id is None:
+            list_id = create_soundslice_list(collection_name)
+            if list_id is None:
                 warnings.warn(
-                    f"Failed to resolve Soundslice folder id for '{folder_name}'. "
+                    f"Failed to create Soundslice list for '{collection_name}'. "
                     "Skipping this processing step.",
                     UserWarning,
                 )
                 return None
+            self._soundslice_list_id_cache[collection_name] = list_id
 
-            self._soundslice_folder_id_cache[folder_name] = folder_id
+        # Instantiate client once we have a valid list_id
+        application_id, password = get_soundslice_credentials_from_env()
+        client = Client(application_id, password)
 
-        # create slice
+        # Create slice
         try:
             new_slice = client.create_slice(
                 name=score_name,
@@ -1405,7 +1366,6 @@ class Score:
                 has_shareable_url=True,
                 embed_status=Constants.EMBED_STATUS_ON_ALLOWLIST,
                 can_print=True,
-                folder_id=folder_id,
             )
 
             # upload MusicXML file
@@ -1422,6 +1382,16 @@ class Score:
                     UserWarning,
                 )
                 return None
+
+            # Add slice to list immediately
+            add_success = add_slices_to_soundslice_list(list_id, [embed_id])
+            if not add_success:
+                warnings.warn(
+                    f"Created slice but failed to add to list for "
+                    f"{self.score_path.name}.",
+                    UserWarning,
+                )
+                # return the scorehash since slice was created successfully
 
             return embed_id
 

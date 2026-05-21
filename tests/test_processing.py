@@ -160,11 +160,12 @@ class _FakeScore:
         return "abc-path-or-s3-uri"
 
     def create_soundslice_slice(
-        self,
-        *,
-        _folder_id: int | None,
+            self,
+            *,
+            collection_metadata,
+            itma_id: str,
     ) -> str:
-        return "https://www.soundslice.com/slices/fake/embed/"
+        return "scorehash_fake_123"
 
     def copy_musicxml_file_to_aws(self, *, collection_root: Path) -> str:
         return "s3://BUCKET_PLACEHOLDER/key.xml"
@@ -286,20 +287,10 @@ def test_collection_processor_run_without_input_metadata_writes_new_csv(
         # blank rather than writing a pipeline-generated title.
         return {"alpha": {"mode": "major"}}
 
-    # Mock Soundslice folder check to prevent API calls in tests
-    def _fake_soundslice_check(folder_name: str) -> int:
-        return 12345  # Return a fake folder ID
-
     monkeypatch.setattr(
         ScoreProcessor,
         "process_single_score",
         staticmethod(_fake_process_single_score),
-    )
-
-    # Add this monkeypatch to prevent Soundslice API calls
-    monkeypatch.setattr(
-        "port.processing.check_soundslice_folder_exists",
-        _fake_soundslice_check,
     )
 
     cp = CollectionProcessor()
@@ -342,20 +333,10 @@ def test_collection_processor_run_with_input_metadata_passes_metadata_adapter(
         assert kwargs["collection_metadata"] is not None
         return {"alpha": {"mode": "major"}}
 
-    # Mock Soundslice folder check to prevent API calls in tests
-    def _fake_soundslice_check(folder_name: str) -> int:
-        return 12345  # Return a fake folder ID
-
     monkeypatch.setattr(
         ScoreProcessor,
         "process_single_score",
         staticmethod(_fake_process_single_score),
-    )
-
-    # Add this monkeypatch to prevent Soundslice API calls
-    monkeypatch.setattr(
-        "port.processing.check_soundslice_folder_exists",
-        _fake_soundslice_check,
     )
 
     cp = CollectionProcessor()
@@ -426,10 +407,6 @@ def test_collection_processor_run_parallel_smoke_aggregates_patches(
     def _fake_as_completed(futures: list[_FakeFuture]):
         return list(reversed(futures))
 
-    # Mock Soundslice folder check to prevent API calls in tests
-    def _fake_soundslice_check(folder_name: str) -> int:
-        return 12345  # Return a fake folder ID
-
     monkeypatch.setattr(
         processing_module,
         "ProcessPoolExecutor",
@@ -440,12 +417,6 @@ def test_collection_processor_run_parallel_smoke_aggregates_patches(
         ScoreProcessor,
         "process_single_score",
         staticmethod(_fake_process_single_score),
-    )
-
-    # Add this monkeypatch to prevent Soundslice API calls
-    monkeypatch.setattr(
-        "port.processing.check_soundslice_folder_exists",
-        _fake_soundslice_check,
     )
 
     cp = CollectionProcessor()

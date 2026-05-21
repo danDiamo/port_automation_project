@@ -1021,7 +1021,7 @@ wheels = [
 
 [[package]]
 name = "port"
-version = "2.0.3"
+version = "2.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "abc-xml-converter" },
@@ -1058,7 +1058,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.7.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "soundsliceapi", specifier = ">=1.1" },
+    { name = "soundsliceapi", specifier = "==1.2" },
     { name = "tqdm", specifier = ">=4.66.0" },
 ]
 provides-extras = ["dev"]
@@ -1393,14 +1393,14 @@ wheels = [
 
 [[package]]
 name = "soundsliceapi"
-version = "1.1"
+version = "1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/2e/9e055c4e9ea5ff9115ab4971b3662bf94f22a2a20becbe742b32ecd77b23/soundsliceapi-1.1.tar.gz", hash = "sha256:69c024119664b2f9f54767879cd75d1c9726b1adedc37f5bbaf252d60dfe6828", size = 7840, upload-time = "2022-08-15T18:14:23.911Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/35/378f0eb6b9d5d80efa9c228a99796c3a9b24c0461005687570405bd8e526/soundsliceapi-1.2.tar.gz", hash = "sha256:f01b76d1ac1737bb4e4dca36c76fe65b08b07d15999c085a018994864f060916", size = 7465, upload-time = "2026-05-21T10:57:05.748Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/cf/6a86c063dbdf10919a350dbff64cef206e9ec412c8eacfbb3fd64c706407/soundsliceapi-1.1-py2.py3-none-any.whl", hash = "sha256:5f88b5f886a57cffb0faffa4862121beb4d3c1f2fbec7b4aa42116f087dc8061", size = 8341, upload-time = "2022-08-15T18:14:21.747Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/8b/f90a6a7d807ace667b35a37968cb901796919c31756dc032df3c72a26a44/soundsliceapi-1.2-py2.py3-none-any.whl", hash = "sha256:69e239a08d78c2fb448628c32eb4fb1d94d2c6752d6979e1c344c5724ebee41d", size = 8090, upload-time = "2026-05-21T10:57:06.724Z" },
 ]
 
 [[package]]
