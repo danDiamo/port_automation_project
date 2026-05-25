@@ -1065,7 +1065,7 @@ class Score:
                     pad_top=1,
                     pad_right=0,
                     pad_bottom=0,
-                    pad_left=-30,  # Negative value trims left whitespace
+                    pad_left=4,  # trims left whitespace
                 )
 
             return output_path

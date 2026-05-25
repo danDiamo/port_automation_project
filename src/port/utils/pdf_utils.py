@@ -354,12 +354,22 @@ def configure_paper(score: LilyPondScore) -> None:
     - Margins (left, right, bottom for footer space)
     - ragged-last and ragged-last-bottom
     - Suppresses page numbers
+    - For SVG mode: forces single-line layout
 
     Args:
         score: The LilyPondScore to modify
     """
     score.ensure_block_exists("paper")
     text = score.get_text()
+
+    # For SVG mode: force single-line layout with very wide line-width
+    if score.suppress_header and "PORT_SVG_SINGLE_LINE" not in text:
+        single_line_config = """  % PORT_SVG_SINGLE_LINE
+      % Force all 4 bars onto a single line for SVG incipit images.
+      % The wide line-width prevents automatic line breaking.
+      % LilyPond's -dcrop flag will still trim the output to actual content width.
+      line-width = 500\\mm"""
+        score.insert_into_block("paper", single_line_config, "PORT_SVG_SINGLE_LINE")
 
     # Ensure basic paper settings exist
     if not re.search(r"ragged-last\s*=", text):
@@ -385,18 +395,20 @@ def configure_paper(score: LilyPondScore) -> None:
       print-page-number = ##f"""
     score.insert_into_block("paper", page_num_overrides, "PORT_SUPPRESS_PAGE_NUMBERS")
 
-    # Set bottom margin for footer
-    text = score.get_text()
-    if re.search(r"(?m)^\s*bottom-margin\s*=", text):
-        text = re.sub(
-            r"(?m)^\s*bottom-margin\s*=.*$",
-            f"  bottom-margin = {FOOTER_RESERVED_MM}\\\\mm",
-            text,
-        )
-    else:
-        comment = "  % Reserve vertical space for the PDF footer/watermark."
-        margin_line = f"  bottom-margin = {FOOTER_RESERVED_MM}\\mm"
-        score.insert_into_block("paper", f"{comment}\n{margin_line}")
+    # Set bottom margin for footer (PDF mode only)
+    if not score.suppress_header:
+        text = score.get_text()
+        if re.search(r"(?m)^\s*bottom-margin\s*=", text):
+            text = re.sub(
+                r"(?m)^\s*bottom-margin\s*=.*$",
+                f"  bottom-margin = {FOOTER_RESERVED_MM}\\\\mm",
+                text,
+            )
+        else:
+            comment = "  % Reserve vertical space for the PDF footer/watermark."
+            margin_line = f"  bottom-margin = {FOOTER_RESERVED_MM}\\mm"
+            score.insert_into_block("paper", f"{comment}\n{margin_line}")
+        score.set_text(text)
 
     # Ensure ragged-last-bottom is set
     text = score.get_text()
