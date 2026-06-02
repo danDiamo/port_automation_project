@@ -11,7 +11,7 @@ Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these t
 - Soundslice integration rebuilt using their new v1.2 API.
 - CLI changed to simplify metadata CSV input: --metadata_csv arg now requires a filename (including ‘.csv’ suffix) rather than a full absolute filepath.
 - Flow control logic bugs affecting partial processing runs have been fixed. README.md has been updated to reflect these changes (see section 5b).
-- Incipit svg images now include key signature and force inclusion of a treble clef.
+- Incipit svg images now include key signature; force inclusion of a treble clef; force single-line output only.
 - Left-side incipit svg image padding has been decreased by 30px.
 - Top padding of score content has been increased for all pages in PDF outputs.
 - Persistent issue with overfull final lines in PDFs has been fixed.
