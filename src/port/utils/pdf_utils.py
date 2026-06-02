@@ -363,12 +363,15 @@ def configure_paper(score: LilyPondScore) -> None:
     text = score.get_text()
 
     # For SVG mode: force single-line layout with very wide line-width
+    # and disable automatic line breaking
     if score.suppress_header and "PORT_SVG_SINGLE_LINE" not in text:
         single_line_config = """  % PORT_SVG_SINGLE_LINE
       % Force all 4 bars onto a single line for SVG incipit images.
       % The wide line-width prevents automatic line breaking.
       % LilyPond's -dcrop flag will still trim the output to actual content width.
-      line-width = 500\\mm"""
+      line-width = 500\\mm
+      % Disable automatic line breaking
+      system-count = #1"""
         score.insert_into_block("paper", single_line_config, "PORT_SVG_SINGLE_LINE")
 
     # Ensure basic paper settings exist
