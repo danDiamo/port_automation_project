@@ -627,10 +627,7 @@ class CollectionProcessor:
 
         # Build a lookup of metadata fields needed by Score processing
         metadata_lookup: dict[str, dict[str, str]] | None = None
-        if (
-                metadata_csv_path is not None and
-                collection_metadata.metadata is not None
-        ):
+        if collection_metadata.metadata is not None:
             metadata_lookup = {}
 
             for _, row in collection_metadata.metadata.iterrows():
@@ -648,22 +645,29 @@ class CollectionProcessor:
                     "source": str(row.get("source")).strip()
                 }
 
-            # If user provided a metadata CSV, treat it as source of truth:
-            # every score file we process must have a corresponding metadata row
-            missing = [
-                p.stem.strip()
-                for p in score_paths
-                if p.stem.strip() not in metadata_lookup
-            ]
-            if missing:
-                preview = ", ".join(missing[:10])
-                suffix = " ..." if len(missing) > 10 else ""
-                raise KeyError(
-                    f"Metadata is missing for score file(s): {preview}{suffix}"
-                )
+            # Only enforce metadata completeness if user EXPLICITLY provided metadata
+            if metadata_csv_path is not None:
+                # If user provided a metadata CSV, treat it as source of truth:
+                # every score file we process must have a corresponding metadata row
+                missing = [
+                    p.stem.strip()
+                    for p in score_paths
+                    if p.stem.strip() not in metadata_lookup
+                ]
+                if missing:
+                    preview = ", ".join(missing[:10])
+                    suffix = " ..." if len(missing) > 10 else ""
+                    raise KeyError(
+                        f"Metadata is missing for score file(s): {preview}{suffix}"
+                    )
 
         metadata_patches: dict[str, dict[str, Any]] = {}
-        has_metadata = metadata_csv_path is not None
+        # Set has_metadata based on whether we have loaded metadata
+        # (either from user-provided CSV OR auto-loaded processed CSV)
+        has_metadata = (
+                metadata_csv_path is not None or
+                (raw_path is None and csv_out_path.exists())
+        )
 
         # Process scores sequentially or in parallel per processing_steps settings
         if not processing_steps.parallel:

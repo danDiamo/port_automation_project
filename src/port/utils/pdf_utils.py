@@ -658,10 +658,10 @@ def cleanup_lilypond_formatting(
 def pad_svg_file(
     svg_path: Path,
     *,
-    pad_top: float = 12.0,
-    pad_right: float = 12.0,
-    pad_bottom: float = 12.0,
-    pad_left: float = 12.0,
+    pad_top: float = 0,
+    pad_right: float = 0,
+    pad_bottom: float = 0,
+    pad_left: float = -10,
 ) -> None:
     """
     Add whitespace padding around an SVG by expanding its viewBox.

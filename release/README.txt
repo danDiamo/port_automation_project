@@ -1,13 +1,13 @@
 Port (macOS Apple Silicon / M1) - Command Line Tool
 ====================================================
 
-Package: Port-v2.0.3-macos-arm64.zip
+Package: Port-v2.0.4-macos-arm64.zip
 
 This package contains a standalone `port` executable, with Python 3.13 and all local dependencies installed 'under the hood' (User does not need to install Python or manage deps).
 
 Some outputs require external tools (LilyPond / FFmpeg / FluidSynth). If these tools are not installed, Port will warn at startup and skip the affected derivatives when running in default "all derivatives" mode.
 
-Release notes for Port v2.0.3:
+Release notes for Port v2.0.4:
 - Soundslice integration rebuilt using their new v1.2 API.
 - CLI changed to simplify metadata CSV input: --metadata_csv arg now requires a filename (including ‘.csv’ suffix) rather than a full absolute filepath.
 - Flow control logic bugs affecting partial processing runs have been fixed. README.md has been updated to reflect these changes (see section 5b).
@@ -21,7 +21,7 @@ Release notes for Port v2.0.3:
 1) Install `port` so you can run it from any Terminal
 ----------------------------------------------------
 
-1. Unzip Port-v2.0.3-macos-arm64.zip
+1. Unzip Port-v2.0.4-macos-arm64.zip
    You will get a folder named: Port/
 
 2. Move the *entire* Port/ folder to user Applications directory (recommended):
